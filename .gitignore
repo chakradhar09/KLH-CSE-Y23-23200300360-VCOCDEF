@@ -1,6 +1,8 @@
 .env
 .idea
 .vscode
+~$*.docx
+~$*.doc
 
 # Python
 __pycache__/
@@ -18,3 +20,9 @@ evidence_index.json
 *.key
 proof*.json
 tamper_results.json
+
+# Node deps for the docx-generation build scripts
+Doc/paper_draft_build/node_modules/
+Doc/paper_draft_build/package-lock.json
+Doc/paper_draft_build/template/node_modules/
+Doc/paper_draft_build/template/package-lock.json
