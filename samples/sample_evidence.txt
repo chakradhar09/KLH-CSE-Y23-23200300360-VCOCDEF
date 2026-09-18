@@ -1,0 +1,27 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0001-SYNTHETIC
+Artifact Type    : text-log-fragment
+Simulated Source : /var/log/auth.log (synthetic)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED LOG CONTENT ---
+2026-01-01T00:00:01Z host sshd[1023]: Accepted publickey for admin from 10.0.0.5 port 51452
+2026-01-01T00:00:07Z host sudo[1029]:    admin : TTY=pts/0 ; PWD=/home/admin ; COMMAND=/bin/ls /data
+2026-01-01T00:00:42Z host sshd[1023]: Received disconnect from 10.0.0.5 port 51452:11: disconnected by user
+2026-01-01T00:05:13Z host sshd[1102]: Failed password for invalid user root from 203.0.113.9 port 44210
+2026-01-01T00:05:15Z host sshd[1102]: Failed password for invalid user root from 203.0.113.9 port 44210
+2026-01-01T00:05:19Z host sshd[1102]: Connection closed by 203.0.113.9 port 44210 [preauth]
+--- END SIMULATED LOG CONTENT ---
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.
+CHakri

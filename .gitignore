@@ -1,3 +1,20 @@
 .env
 .idea
 .vscode
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.pytest_cache/
+
+# Generated at runtime -- keys, logs, and databases are case-specific
+# artifacts, never source, and a leaked private key defeats the whole
+# chain-of-custody signature scheme.
+*.pem
+custody_log.json
+evidence_index.json
+*.db
+*.key
+proof*.json
+tamper_results.json

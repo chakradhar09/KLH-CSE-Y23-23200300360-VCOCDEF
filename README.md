@@ -19,11 +19,9 @@ Digital forensic investigations depend on the integrity of evidence artifacts li
 
 ## Setup and Execution Instructions
 
-> Implementation is in progress per the roadmap below. The steps here reflect intended usage as each module comes online.
-
 ### Prerequisites
 
-- Python 3.x
+- Python 3.10+
 - `pip`
 
 ### 1. Clone the repository
@@ -46,27 +44,65 @@ source venv/bin/activate   # on Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Key dependencies: `python-ecdsa` (digital signatures). `hashlib`, `json`, and `argparse` are part of the Python standard library and need no separate install.
+Key dependencies: `ecdsa` (digital signatures), `cryptography` (AES-GCM encryption at rest). `hashlib`, `json`, `sqlite3`, and `argparse` are part of the Python standard library and need no separate install.
 
-### 4. Log a custody event
+### 4. Generate a signing keypair
+
+```bash
+python cli.py init-keys --private-key private_key.pem --public-key public_key.pem
+```
+
+### 5. Register a piece of evidence (hashes the file, adds it as a Merkle leaf)
+
+```bash
+python cli.py add-evidence --file sample.bin --evidence-id EV001
+```
+
+### 6. Log a custody event
 
 ```bash
 python cli.py log-event --evidence-id EV001 --actor "J. Doe" --action "collected"
 ```
 
-### 5. Verify the entire chain
+### 7. Verify the entire chain
 
 ```bash
-python cli.py verify-chain --log custody_log.json
+python cli.py verify-chain --log custody_log.json --public-key public_key.pem
 ```
 
-### 6. Run the standalone verifier independently
+### 8. Generate and check a Merkle inclusion proof
 
 ```bash
-python verifier.py --log custody_log.json
+python cli.py merkle-root --evidence-index evidence_index.json
+python cli.py merkle-proof --evidence-id EV001 --out proof.json
 ```
 
-The standalone verifier is intentionally decoupled from the logging CLI — it independently recomputes the hash chain and Merkle proofs from scratch, so it does not have to trust the logging system's own self-reported state.
+### 9. Run the standalone verifier independently
+
+```bash
+python verifier.py --log custody_log.json --public-key public_key.pem --merkle-proof proof.json
+```
+
+The standalone verifier is intentionally decoupled from the logging CLI — it re-implements hash and signature recomputation from first principles (no shared code path with `cli.py`/`vcoc.hash_chain`), so it does not have to trust the logging system's own self-reported state.
+
+### 10. Encrypted-at-rest storage (SQLite + AES-GCM)
+
+```python
+from vcoc.storage import EncryptedStore, generate_key, save_key
+key = generate_key()
+save_key(key, "aes.key")
+store = EncryptedStore("custody.db", key)
+```
+
+Every row is stored as an AES-256-GCM ciphertext blob (nonce + tag included); the primary key is bound in as authenticated associated data, so copying one row's ciphertext onto another row fails to decrypt.
+
+### 11. Tamper-simulation experiment
+
+```bash
+python scripts/tamper_simulation.py --out tamper_results.json
+```
+
+Builds a clean chain, then applies four single-point corruptions (payload field, signature, and hash-link tampering) one at a time and confirms the standalone verifier catches every one at the correct entry.
 
 ### Running tests
 
@@ -74,28 +110,30 @@ The standalone verifier is intentionally decoupled from the logging CLI — it i
 pytest
 ```
 
+45 tests cover hashing, Merkle proof correctness (including odd-leaf-count trees), hash-chain tamper detection, ECDSA sign/verify, encrypted storage (including AEAD row-binding), and the end-to-end tamper-simulation CLI.
+
 ## Current Phase Status
 
-**Phase:** PRC-I (Project Review – 1) — **Planning complete**
+**Phase:** PRC-II (Project Review – 2) — **Core implementation complete**
 
 Completed so far:
-- Problem statement, objectives, and 10-source literature survey finalized
-- Research gap identified: no surveyed system combines hash chaining, Merkle trees, and ECDSA signing in a standalone, non-blockchain tool purpose-built for forensic evidence custody
-- Project abstract formally submitted (A.Y. 2026–2027)
-- 6-week, learning-integrated implementation roadmap finalized (see below)
+- PRC-I: problem statement, objectives, 10-source literature survey, research gap identification, project abstract
+- Core modules implemented and unit-tested: `hashing.py` (SHA-256), `merkle.py` (tree + inclusion proofs), `hash_chain.py` (append-only, hash-linked, ECDSA-signed custody log), `ecdsa_signer.py`
+- `cli.py` (init-keys, add-evidence, log-event, verify-chain, merkle-root, merkle-proof) and a standalone `verifier.py` that independently re-derives every hash/signature check
+- Scope extensions: SQLite storage with AES-256-GCM encryption at rest (`storage.py`), and a tamper-simulation experiment harness (`scripts/tamper_simulation.py`)
+- 45 unit/integration tests, including tamper-detection scenarios for payload, signature, and hash-link corruption
 
-### Roadmap
+### Repository Layout
 
-| Week | Focus              | Build                                                                        |
-|---|--------------------|------------------------------------------------------------------------------|
-| 1 | Foundations        | Design custody log schema (evidence ID, actor, action, timestamp, prev-hash) |
-| 2 | Hash chaining      | Implement `hash_chain.py`                                                    |
-| 3 | Merkle trees       | Implement `merkle_tree.py`                                                   |
-| 4 | ECDSA signing      | Implement `ecdsa_signer.py`                                                  |
-| 5 | CLI integration    | Build `cli.py` (log-event, verify-chain, export-proof)                       |
-| 6 | Verifier + testing | Build `verifier.py`; test tampering scenarios; prep PRC-II demo              |
+```
+src/vcoc/          Core library (hashing, merkle, hash_chain, ecdsa_signer, storage, models)
+cli.py             CLI entry point
+verifier.py        Standalone, independently-implemented verifier
+scripts/           Experiment harnesses (tamper_simulation.py)
+tests/             pytest suite
+```
 
-**Next milestone:** PRC-II — working hash-chain and Merkle tree modules, initial ECDSA signing/verification, and preliminary tampering-detection test results.
+**Next milestone:** Experimental results (performance/scale, tamper-detection results table) and paper draft for PRC-II submission.
 
 ## Standards Referenced
 - **Python-ecdsa documentation**
