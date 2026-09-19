@@ -1,3 +1,4 @@
 ecdsa>=0.19
 cryptography>=42.0
 pytest>=8.0
+matplotlib>=3.8
