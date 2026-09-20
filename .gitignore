@@ -3,7 +3,8 @@
 .vscode
 ~$*.docx
 ~$*.doc
-
+.claude
+CLAUDE.md
 # Python
 __pycache__/
 *.pyc
