@@ -4,6 +4,7 @@
 Commands:
     init-keys        Generate an ECDSA keypair for signing custody events.
     add-evidence      Hash a file, register it as evidence, add it as a Merkle leaf.
+    check-evidence    Rehash a file and compare it against its recorded evidence hash.
     log-event        Append a signed custody event to the hash chain.
     verify-chain      Recompute and verify the entire hash chain + signatures.
     merkle-root       Print the current Merkle root over registered evidence.
@@ -58,6 +59,7 @@ def cmd_add_evidence(args: argparse.Namespace) -> None:
         sha256=digest,
         size_bytes=size_bytes,
         added_at=utc_now_iso(),
+        source_path=str(Path(args.file).resolve()),
     )
     index = _load_evidence_index(args.evidence_index)
     index[evidence.evidence_id] = evidence.__dict__
@@ -77,6 +79,22 @@ def cmd_log_event(args: argparse.Namespace) -> None:
     chain.save(args.log)
     print(f"Logged event #{entry.index}: {entry.action} on {entry.evidence_id} by {entry.actor}")
     print(f"entry_hash={entry.entry_hash}")
+
+
+def cmd_check_evidence(args: argparse.Namespace) -> None:
+    index = _load_evidence_index(args.evidence_index)
+    if args.evidence_id not in index:
+        print(f"Unknown evidence id: {args.evidence_id}")
+        sys.exit(1)
+    recorded = index[args.evidence_id]["sha256"]
+    current = hash_file(args.file)
+    if current == recorded:
+        print(f"OK: {args.file} matches recorded sha256 for {args.evidence_id}.")
+    else:
+        print(f"TAMPER DETECTED: {args.file} does NOT match recorded sha256 for {args.evidence_id}.")
+        print(f"  recorded: {recorded}")
+        print(f"  current:  {current}")
+        sys.exit(1)
 
 
 def cmd_verify_chain(args: argparse.Namespace) -> None:
@@ -125,6 +143,12 @@ def cmd_merkle_proof(args: argparse.Namespace) -> None:
         print(json.dumps(output, indent=2))
 
 
+def cmd_shell(args: argparse.Namespace) -> None:
+    from vcoc.interactive.app import run_shell
+
+    run_shell()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="cli.py", description="Verifiable Chain-of-Custody CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -148,6 +172,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--private-key", default=DEFAULT_PRIVATE_KEY)
     p.set_defaults(func=cmd_log_event)
 
+    p = sub.add_parser("check-evidence", help="Check a file against its recorded evidence hash")
+    p.add_argument("--file", required=True)
+    p.add_argument("--evidence-id", required=True)
+    p.add_argument("--evidence-index", default=DEFAULT_EVIDENCE_INDEX)
+    p.set_defaults(func=cmd_check_evidence)
+
     p = sub.add_parser("verify-chain", help="Verify the custody hash chain")
     p.add_argument("--log", default=DEFAULT_LOG)
     p.add_argument("--public-key", default=DEFAULT_PUBLIC_KEY)
@@ -162,6 +192,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--evidence-index", default=DEFAULT_EVIDENCE_INDEX)
     p.add_argument("--out", default=None)
     p.set_defaults(func=cmd_merkle_proof)
+
+    p = sub.add_parser("shell", help="Launch the interactive shell")
+    p.set_defaults(func=cmd_shell)
 
     return parser
 

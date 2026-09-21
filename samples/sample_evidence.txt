@@ -24,4 +24,3 @@ Collection Tool  : synthetic-generator v0.1
 Any modification to a single byte of this file will change its
 SHA-256 digest and invalidate the corresponding Merkle inclusion
 proof, which is the property under test.
-CHakri

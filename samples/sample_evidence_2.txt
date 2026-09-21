@@ -1,0 +1,25 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0002-SYNTHETIC
+Artifact Type    : browser-history-export
+Simulated Source : C:\Users\jdoe\AppData\Local\Chrome\History (synthetic)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED BROWSER HISTORY EXPORT ---
+2026-01-02T09:12:03Z visit https://mail.example.com/inbox
+2026-01-02T09:14:51Z visit https://accounts.example.com/login?redirect=/settings
+2026-01-02T09:15:37Z visit https://files.example.com/share/9f21ab
+2026-01-02T09:20:02Z download https://files.example.com/share/9f21ab/payload.zip
+2026-01-02T09:21:44Z visit https://mail.example.com/inbox
+--- END SIMULATED BROWSER HISTORY EXPORT ---
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.

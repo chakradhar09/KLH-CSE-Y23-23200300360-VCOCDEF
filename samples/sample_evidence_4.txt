@@ -1,0 +1,25 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0004-SYNTHETIC
+Artifact Type    : network-capture-summary
+Simulated Source : eth0.pcap (synthetic, summarized)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED NETWORK CAPTURE SUMMARY ---
+2026-01-03T02:11:05Z TCP 10.0.0.5:51452  -> 10.0.0.1:22    SYN
+2026-01-03T02:11:05Z TCP 10.0.0.1:22     -> 10.0.0.5:51452 SYN-ACK
+2026-01-03T02:11:05Z TCP 10.0.0.5:51452  -> 10.0.0.1:22    ACK
+2026-01-03T02:14:22Z TCP 10.0.0.5:51470  -> 203.0.113.9:4444 SYN [flagged: unexpected outbound]
+2026-01-03T02:14:23Z TCP 203.0.113.9:4444 -> 10.0.0.5:51470 SYN-ACK
+--- END SIMULATED NETWORK CAPTURE SUMMARY ---
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.

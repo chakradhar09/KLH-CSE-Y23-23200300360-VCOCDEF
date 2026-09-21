@@ -3,11 +3,13 @@
 
 Deliberately decoupled from ``cli.py``: it re-implements hash and signature
 recomputation from first principles (stdlib ``hashlib`` + ``ecdsa`` only,
-no import of ``vcoc.hash_chain``), so a bug or backdoor in the logging tool
-cannot cause this verifier to falsely certify a tampered log as authentic.
-It reads only the same public artifacts an outside auditor would have: the
-JSON log file, the public key, and (optionally) an evidence index + Merkle
-proof file.
+no import of ``vcoc.hash_chain`` or ``vcoc.merkle``), so a bug or backdoor in
+the logging tool cannot cause this verifier to falsely certify a tampered
+log as authentic. It reads only the same public artifacts an outside
+auditor would have: the JSON custody log, the public key, and (optionally)
+the evidence index and a Merkle proof file. ``evidence_index.json`` is read
+directly (not through ``vcoc``) -- it is a plain public data file, the same
+kind of artifact ``custody_log.json`` already is, not logging-tool logic.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import argparse
 import hashlib
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from ecdsa import BadSignatureError, VerifyingKey
@@ -81,25 +84,108 @@ def verify_merkle_proof(leaf: str, proof: list[dict], root: str) -> bool:
     return computed == root
 
 
+def merkle_root(leaves: list[str]) -> str:
+    """Recompute a Merkle root from ordered leaf hashes, from scratch."""
+    if not leaves:
+        raise ValueError("cannot compute a Merkle root over zero leaves")
+    level = list(leaves)
+    while len(level) > 1:
+        next_level = []
+        for i in range(0, len(level), 2):
+            left = level[i]
+            right = level[i + 1] if i + 1 < len(level) else level[i]
+            next_level.append(hash_hex_pair(left, right))
+        level = next_level
+    return level[0]
+
+
+@dataclass
+class EvidenceCheckResult:
+    """Per-evidence-record verification outcome."""
+
+    evidence_id: str
+    original_filename: str
+    recorded_sha256: str
+    source_path: str
+    rehash_status: str  # "match" | "MISMATCH" | "not found" | "no source_path recorded"
+    logged_status: str  # "logged" | "NOT LOGGED"
+
+    @property
+    def ok(self) -> bool:
+        return self.rehash_status in ("match", "not found", "no source_path recorded") and self.logged_status == "logged"
+
+
+def verify_evidence_index(
+    index: dict, custody_entries: list[dict]
+) -> tuple[list[EvidenceCheckResult], str | None]:
+    """Independently re-check every evidence record in ``evidence_index.json``.
+
+    For each record: re-hash the file at ``source_path`` if it still exists
+    on disk (a missing/moved file is reported, not treated as tamper -- the
+    file may simply have been archived elsewhere since collection), and
+    confirm at least one custody_log.json entry references the evidence_id.
+    Also recomputes the Merkle root over all recorded hashes.
+
+    Returns (per-evidence results, recomputed root or None if index empty).
+    """
+    logged_ids = {entry["evidence_id"] for entry in custody_entries}
+
+    results = []
+    for evidence_id, rec in sorted(index.items()):
+        source_path = rec.get("source_path", "")
+        if not source_path:
+            rehash_status = "no source_path recorded"
+        elif not Path(source_path).exists():
+            rehash_status = "not found"
+        else:
+            current = sha256_hex(Path(source_path).read_bytes())
+            rehash_status = "match" if current == rec["sha256"] else "MISMATCH"
+
+        logged_status = "logged" if evidence_id in logged_ids else "NOT LOGGED"
+
+        results.append(
+            EvidenceCheckResult(
+                evidence_id=evidence_id,
+                original_filename=rec.get("original_filename", ""),
+                recorded_sha256=rec["sha256"],
+                source_path=source_path,
+                rehash_status=rehash_status,
+                logged_status=logged_status,
+            )
+        )
+
+    if not index:
+        return results, None
+    leaves = [rec["sha256"] for _, rec in sorted(index.items())]
+    return results, merkle_root(leaves)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="verifier.py", description="Standalone chain-of-custody verifier")
     parser.add_argument("--log", required=True, help="Path to custody_log.json")
     parser.add_argument("--public-key", required=True, help="Path to the signer's PEM public key")
     parser.add_argument("--merkle-proof", default=None, help="Optional Merkle proof JSON to also verify")
+    parser.add_argument(
+        "--evidence-index",
+        default=None,
+        help="Optional path to evidence_index.json to independently re-verify every registered evidence file",
+    )
     args = parser.parse_args(argv)
 
     entries = json.loads(Path(args.log).read_text(encoding="utf-8"))
     verifying_key = VerifyingKey.from_pem(Path(args.public_key).read_bytes())
+    exit_code = 0
 
-    ok, break_index, reason = verify_chain(entries, verifying_key)
-    if ok:
+    print("== Chain verification ==")
+    chain_ok, break_index, reason = verify_chain(entries, verifying_key)
+    if chain_ok:
         print(f"OK: chain of {len(entries)} entries verified independently ({reason}).")
     else:
         print(f"TAMPER DETECTED at entry #{break_index}: {reason}")
-
-    exit_code = 0 if ok else 1
+        exit_code = 1
 
     if args.merkle_proof:
+        print("\n== Merkle inclusion proof ==")
         proof_data = json.loads(Path(args.merkle_proof).read_text(encoding="utf-8"))
         merkle_ok = verify_merkle_proof(proof_data["leaf"], proof_data["proof"], proof_data["root"])
         evidence_id = proof_data.get("evidence_id", "<unknown>")
@@ -109,6 +195,23 @@ def main(argv: list[str] | None = None) -> None:
             print(f"TAMPER DETECTED: Merkle inclusion proof for {evidence_id} does NOT match the claimed root.")
             exit_code = 1
 
+    if args.evidence_index:
+        print("\n== Evidence verification ==")
+        index = json.loads(Path(args.evidence_index).read_text(encoding="utf-8"))
+        results, root = verify_evidence_index(index, entries)
+        if not results:
+            print("No evidence registered.")
+        for r in results:
+            print(f"{r.evidence_id}  ({r.original_filename})")
+            print(f"  re-hash: {r.rehash_status}")
+            print(f"  custody log: {r.logged_status}")
+            if not r.ok:
+                exit_code = 1
+        if root is not None:
+            print(f"\nRecomputed Merkle root over {len(results)} evidence file(s): {root}")
+
+    print()
+    print("OK: all requested verifications passed." if exit_code == 0 else "TAMPER DETECTED: see above.")
     sys.exit(exit_code)
 
 

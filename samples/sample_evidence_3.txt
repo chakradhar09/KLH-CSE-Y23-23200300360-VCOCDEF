@@ -1,0 +1,25 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0003-SYNTHETIC
+Artifact Type    : memory-dump-excerpt
+Simulated Source : /dev/mem (synthetic, offset 0x00A1F000)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED MEMORY DUMP EXCERPT (process list) ---
+PID   PPID  NAME                 CMDLINE
+1023  1     sshd                 /usr/sbin/sshd -D
+1029  1023  bash                 -bash
+2044  1029  suspicious_agent     /tmp/.hidden/agent --beacon=203.0.113.9:4444
+2051  2044  base64               base64 -d /tmp/.hidden/payload.b64
+--- END SIMULATED MEMORY DUMP EXCERPT ---
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.

@@ -14,6 +14,7 @@ class Evidence:
     sha256: str
     size_bytes: int
     added_at: str  # ISO 8601 UTC timestamp
+    source_path: str = field(default="")  # resolved path at collection time
 
 
 @dataclass

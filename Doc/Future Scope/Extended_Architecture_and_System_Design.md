@@ -488,7 +488,34 @@ Phase I runnable in parallel at any point since it requires no code.
 
 ---
 
-## 9. What Does *Not* Change
+## 9. Interface Strategy: CLI and Web Are Both Permanent, Not Sequential
+
+The interactive CLI shell (an arrow-key/menu-driven wrapper over `cli.py`,
+tracked separately in `tasks/plan.md`) and the future-scope web interface
+(§4.1–4.3 above) are **not** a stopgap-then-replacement pair — both are
+permanent, targeting different users:
+
+- **CLI shell:** personal/single-operator use. Wraps `cli.py`'s existing
+  `cmd_*` functions directly; storage stays `evidence_index.json` +
+  `custody_log.json`, with an optional local `EncryptedStore` mirror for
+  search. No server, no network — a single investigator running the tool on
+  their own machine.
+- **Web interface:** built for demo purposes now, targeting future
+  deployment by organizations/central authorities. It is **software they
+  self-host**, not a service this project operates — each deploying org runs
+  it on their own servers against their own database (their own instance of
+  the §3.1 relational schema, §4.1 FastAPI wrapper), following a setup manual
+  this project ships alongside the code. This project never hosts shared
+  infrastructure for anyone.
+
+Consequence for Phase C/D (§8): when the web interface is built for real, it
+gets its own backend — the full relational `EVIDENCE_ITEMS`/
+`CUSTODY_EVENTS`/`SIGNATURES`/`MERKLE_LEAVES` schema (§3.1) — rather than
+reusing the CLI shell's lightweight JSON+SQLite mirror. The two storage
+paths are intentionally separate, one per interface, both wrapping the same
+untouched `Core` engine.
+
+## 10. What Does *Not* Change
 
 To keep this extension honest to the core thesis, the following remain
 fixed across every phase above:

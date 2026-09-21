@@ -44,7 +44,7 @@ source venv/bin/activate   # on Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Key dependencies: `ecdsa` (digital signatures), `cryptography` (AES-GCM encryption at rest). `hashlib`, `json`, `sqlite3`, and `argparse` are part of the Python standard library and need no separate install.
+Key dependencies: `ecdsa` (digital signatures), `cryptography` (AES-GCM encryption at rest), `prompt_toolkit` (interactive shell, §12). `hashlib`, `json`, `sqlite3`, and `argparse` are part of the Python standard library and need no separate install.
 
 ### 4. Generate a signing keypair
 
@@ -104,13 +104,69 @@ python scripts/tamper_simulation.py --out tamper_results.json
 
 Builds a clean chain, then applies four single-point corruptions (payload field, signature, and hash-link tampering) one at a time and confirms the standalone verifier catches every one at the correct entry.
 
+### 12. Interactive shell
+
+```bash
+python cli.py shell
+```
+
+An arrow-key-driven menu over the same 7 subcommands above, for investigators
+who'd rather navigate a menu than type full commands. It's a thin wrapper —
+every action calls the same unmodified `cmd_*` functions as the one-shot CLI,
+so results and files written are identical either way.
+
+```
+┌─ Verifiable Chain-of-Custody — Interactive Shell ───────────────────┐
+│   ▸ 1  Add evidence                                                 │
+│     2  Search / browse evidence                                     │
+│     3  Check evidence integrity                                     │
+│     4  Log custody event                                            │
+│     5  Verify chain                                                 │
+│     6  Merkle root                                                  │
+│     7  Merkle proof                                                 │
+│     8  Generate keypair (init-keys)                                 │
+│     9  Quit                                                         │
+├──────────────────────────────────────────────────────────────────── │
+│ ↑/↓ navigate   1-9 jump   Enter select   Esc/q quit                 │
+└──────────────────────────────────────────────────────────────────── ┘
+```
+
+- `evidence_index.json` stays the single source of truth for every command,
+  exactly as in the one-shot CLI.
+- The first time you add evidence, the shell offers to create `vcoc.key` +
+  `evidence_store.db` — an optional AES-GCM-encrypted SQLite mirror of the
+  index (via `storage.EncryptedStore`, §10). Decline and the shell works on
+  `evidence_index.json` alone, same as before.
+- If you keep the mirror, **Search / browse evidence** and every
+  evidence-picker screen filter both sources live as you type, and tag each
+  match `[mirrored]`, `[index-only]`, `[store-only]`, or `[DIVERGED]` (same
+  ID, different hash — surfaced, never silently resolved).
+- `verifier.py` is untouched and has no code path through the shell — its
+  independence from the logging system is unaffected.
+- **Key-pair setup on first use:** the first time you select **Log custody
+  event** or **Verify chain**, the shell checks whether the configured
+  private/public key files exist. If not, it prompts for their locations
+  (offering to generate a fresh pair at the chosen path via the same
+  `init-keys` logic if nothing is found there) and remembers the paths in
+  `shell_config.json` for future sessions. If a configured key file is later
+  deleted or moved, the shell notices and re-prompts rather than failing
+  silently.
+- **Path autofill:** every prompt that collects a file or directory path
+  (evidence file, key paths, Merkle-proof output) shows matching
+  files/folders from the filesystem as you type — `Tab`/`↓` to browse
+  matches, `Enter` to select a file or descend into a directory. Typing a
+  path with no filesystem match still works; it's submitted as typed.
+
+Full architecture, sequence diagrams, and a worked example session are in
+[`Doc/CLI_Interactive_Shell_Architecture.md`](Doc/CLI_Interactive_Shell_Architecture.md).
+
 ### Running tests
 
 ```bash
 pytest
 ```
 
-45 tests cover hashing, Merkle proof correctness (including odd-leaf-count trees), hash-chain tamper detection, ECDSA sign/verify, encrypted storage (including AEAD row-binding), and the end-to-end tamper-simulation CLI.
+80 tests cover hashing, Merkle proof correctness (including odd-leaf-count trees), hash-chain tamper detection, ECDSA sign/verify, encrypted storage (including AEAD row-binding), the end-to-end tamper-simulation CLI, headless smoke tests for the interactive shell, pure-function coverage of the shell's EncryptedStore bridge (key acquisition, dual-write mirror success/failure, cross-store search merge/tag/divergence), the shell config file (round-trip, corrupt-file handling), filesystem path autofill, and the key-pair confirmation gate (missing/cached/deleted-key scenarios).
 
 ## Current Phase Status
 
@@ -119,18 +175,19 @@ pytest
 Completed so far:
 - PRC-I: problem statement, objectives, 10-source literature survey, research gap identification, project abstract
 - Core modules implemented and unit-tested: `hashing.py` (SHA-256), `merkle.py` (tree + inclusion proofs), `hash_chain.py` (append-only, hash-linked, ECDSA-signed custody log), `ecdsa_signer.py`
-- `cli.py` (init-keys, add-evidence, log-event, verify-chain, merkle-root, merkle-proof) and a standalone `verifier.py` that independently re-derives every hash/signature check
-- Scope extensions: SQLite storage with AES-256-GCM encryption at rest (`storage.py`), and a tamper-simulation experiment harness (`scripts/tamper_simulation.py`)
-- 45 unit/integration tests, including tamper-detection scenarios for payload, signature, and hash-link corruption
+- `cli.py` (init-keys, add-evidence, log-event, verify-chain, merkle-root, merkle-proof, shell) and a standalone `verifier.py` that independently re-derives every hash/signature check
+- Scope extensions: SQLite storage with AES-256-GCM encryption at rest (`storage.py`), a tamper-simulation experiment harness (`scripts/tamper_simulation.py`), and an interactive shell (`vcoc.interactive`, §12) over the same one-shot commands, with a persisted key-pair setup gate and filesystem path autofill
+- 80 unit/integration tests, including tamper-detection scenarios for payload, signature, and hash-link corruption, headless shell smoke tests, pure-function store-bridge coverage, and the shell's config/autofill/key-gate coverage
 
 ### Repository Layout
 
 ```
-src/vcoc/          Core library (hashing, merkle, hash_chain, ecdsa_signer, storage, models)
-cli.py             CLI entry point
-verifier.py        Standalone, independently-implemented verifier
-scripts/           Experiment harnesses (tamper_simulation.py)
-tests/             pytest suite
+src/vcoc/             Core library (hashing, merkle, hash_chain, ecdsa_signer, storage, models)
+src/vcoc/interactive/ Interactive shell (menu, forms, live search, EncryptedStore bridge)
+cli.py                CLI entry point (incl. `shell` subcommand)
+verifier.py           Standalone, independently-implemented verifier
+scripts/              Experiment harnesses (tamper_simulation.py)
+tests/                pytest suite
 ```
 
 **Next milestone:** Experimental results (performance/scale, tamper-detection results table) and paper draft for PRC-II submission.
