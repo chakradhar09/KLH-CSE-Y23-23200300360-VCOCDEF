@@ -24,96 +24,30 @@ Digital forensic investigations depend on the integrity of evidence artifacts li
 - Python 3.10+
 - `pip`
 
-### 1. Clone the repository
+### 1. Clone (or download) the repository
 
 ```bash
 git clone https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF.git
 cd verifiable-coc
 ```
 
-### 2. Create a virtual environment (recommended)
+Alternatively, download the ZIP from the repository's **Code → Download ZIP** button and extract it.
 
-```bash
-python -m venv venv
-source venv/bin/activate   # on Windows: venv\Scripts\activate
-```
-
-### 3. Install dependencies
+### 2. Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Key dependencies: `ecdsa` (digital signatures), `cryptography` (AES-GCM encryption at rest), `prompt_toolkit` (interactive shell, §12). `hashlib`, `json`, `sqlite3`, and `argparse` are part of the Python standard library and need no separate install.
+Key dependencies: `ecdsa` (digital signatures), `cryptography` (AES-GCM encryption at rest), `prompt_toolkit` (interactive shell). `hashlib`, `json`, `sqlite3`, and `argparse` are part of the Python standard library and need no separate install.
 
-### 4. Generate a signing keypair
-
-```bash
-python cli.py init-keys --private-key private_key.pem --public-key public_key.pem
-```
-
-### 5. Register a piece of evidence (hashes the file, adds it as a Merkle leaf)
-
-```bash
-python cli.py add-evidence --file sample.bin --evidence-id EV001
-```
-
-### 6. Log a custody event
-
-```bash
-python cli.py log-event --evidence-id EV001 --actor "J. Doe" --action "collected"
-```
-
-### 7. Verify the entire chain
-
-```bash
-python cli.py verify-chain --log custody_log.json --public-key public_key.pem
-```
-
-### 8. Generate and check a Merkle inclusion proof
-
-```bash
-python cli.py merkle-root --evidence-index evidence_index.json
-python cli.py merkle-proof --evidence-id EV001 --out proof.json
-```
-
-### 9. Run the standalone verifier independently
-
-```bash
-python verifier.py --log custody_log.json --public-key public_key.pem --merkle-proof proof.json
-```
-
-The standalone verifier is intentionally decoupled from the logging CLI — it re-implements hash and signature recomputation from first principles (no shared code path with `cli.py`/`vcoc.hash_chain`), so it does not have to trust the logging system's own self-reported state.
-
-### 10. Encrypted-at-rest storage (SQLite + AES-GCM)
-
-```python
-from vcoc.storage import EncryptedStore, generate_key, save_key
-key = generate_key()
-save_key(key, "aes.key")
-store = EncryptedStore("custody.db", key)
-```
-
-Every row is stored as an AES-256-GCM ciphertext blob (nonce + tag included); the primary key is bound in as authenticated associated data, so copying one row's ciphertext onto another row fails to decrypt.
-
-### 11. Tamper-simulation experiment
-
-```bash
-python scripts/tamper_simulation.py --out tamper_results.json
-```
-
-Builds a clean chain, then applies four single-point corruptions (payload field, signature, and hash-link tampering) one at a time and confirms the standalone verifier catches every one at the correct entry.
-
-### 12. Interactive shell
+### 3. Run the interactive shell
 
 ```bash
 python cli.py shell
 ```
 
-An arrow-key-driven menu over the same 7 subcommands above, for investigators
-who'd rather navigate a menu than type full commands. It's a thin wrapper —
-every action calls the same unmodified `cmd_*` functions as the one-shot CLI,
-so results and files written are identical either way.
+This is the primary way to use the system — an arrow-key-driven menu that covers every operation (registering evidence, logging custody events, verifying the chain, generating keys, etc.) without needing to type individual CLI flags. On first use it will prompt you to generate a signing keypair and, optionally, set up encrypted storage.
 
 ```
 ┌─ Verifiable Chain-of-Custody — Interactive Shell ───────────────────┐
@@ -131,34 +65,31 @@ so results and files written are identical either way.
 └──────────────────────────────────────────────────────────────────── ┘
 ```
 
-- `evidence_index.json` stays the single source of truth for every command,
-  exactly as in the one-shot CLI.
-- The first time you add evidence, the shell offers to create `vcoc.key` +
-  `evidence_store.db` — an optional AES-GCM-encrypted SQLite mirror of the
-  index (via `storage.EncryptedStore`, §10). Decline and the shell works on
-  `evidence_index.json` alone, same as before.
-- If you keep the mirror, **Search / browse evidence** and every
-  evidence-picker screen filter both sources live as you type, and tag each
-  match `[mirrored]`, `[index-only]`, `[store-only]`, or `[DIVERGED]` (same
-  ID, different hash — surfaced, never silently resolved).
-- `verifier.py` is untouched and has no code path through the shell — its
-  independence from the logging system is unaffected.
-- **Key-pair setup on first use:** the first time you select **Log custody
-  event** or **Verify chain**, the shell checks whether the configured
-  private/public key files exist. If not, it prompts for their locations
-  (offering to generate a fresh pair at the chosen path via the same
-  `init-keys` logic if nothing is found there) and remembers the paths in
-  `shell_config.json` for future sessions. If a configured key file is later
-  deleted or moved, the shell notices and re-prompts rather than failing
-  silently.
-- **Path autofill:** every prompt that collects a file or directory path
-  (evidence file, key paths, Merkle-proof output) shows matching
-  files/folders from the filesystem as you type — `Tab`/`↓` to browse
-  matches, `Enter` to select a file or descend into a directory. Typing a
-  path with no filesystem match still works; it's submitted as typed.
+Everything below explains what each menu option / underlying module actually does.
 
-Full architecture, sequence diagrams, and a worked example session are in
-[`Doc/CLI_Interactive_Shell_Architecture.md`](Doc/CLI_Interactive_Shell_Architecture.md).
+## What the Sections and Functions Do
+
+### Core library (`src/vcoc/`)
+
+- **`hashing.py`** — computes the SHA-256 hash of an evidence file. This is the fingerprint recorded at intake and recomputed on every later check.
+- **`merkle.py`** — builds a Merkle tree over all registered evidence hashes and produces/verifies inclusion proofs, so you can prove a specific file was part of the evidence set at a given point without re-hashing everything.
+- **`hash_chain.py`** — the custody log itself: an append-only, hash-linked chain of events (collected, transferred, accessed, etc.), where each entry embeds the hash of the previous one so any edit or deletion breaks the chain visibly.
+- **`ecdsa_signer.py`** — signs each custody log entry with an ECDSA private key and verifies signatures with the matching public key, so entries can't be forged or altered without invalidating the signature.
+- **`storage.py`** — optional encrypted-at-rest storage: an AES-256-GCM-encrypted SQLite database that mirrors the evidence index. Each row's primary key is bound in as authenticated associated data, so ciphertext can't be copied between rows.
+- **`models.py`** — shared data structures (evidence records, custody events) used across the library.
+- **`interactive/`** — the interactive shell implementation:
+  - `menu.py` — renders the arrow-key menu shown above and dispatches to the same command functions the one-shot CLI uses.
+  - `forms.py` — guided input prompts (evidence file, actor, action, etc.) with filesystem path autofill.
+  - `evidence_search.py` — live search/filter across the evidence index and (if enabled) the encrypted store, tagging results as `[mirrored]`, `[index-only]`, `[store-only]`, or `[DIVERGED]`.
+  - `verification_screen.py` — drives the "check evidence integrity" and "verify chain" menu options.
+  - `store_bridge.py` — keeps the plaintext evidence index and the optional encrypted SQLite mirror in sync.
+  - `config.py` — reads/writes `shell_config.json`, which remembers key-pair paths and storage preferences between sessions.
+
+### Entry points
+
+- **`cli.py`** — the command-line entry point. `python cli.py shell` launches the interactive shell; the same file also exposes one-shot subcommands (`init-keys`, `add-evidence`, `log-event`, `check-evidence`, `verify-chain`, `merkle-root`, `merkle-proof`) that the shell calls under the hood, for scripting/automation use.
+- **`verifier.py`** — a standalone verifier, intentionally decoupled from `cli.py`. It re-implements hash and signature recomputation from first principles (no shared code path with `vcoc.hash_chain`), so it can independently confirm whether evidence or its custody history has been altered, without trusting the logging system's own self-reported state.
+- **`scripts/tamper_simulation.py`** — an experiment harness that builds a clean chain, applies single-point corruptions (payload, signature, hash-link), and confirms the standalone verifier catches every one.
 
 ### Running tests
 
@@ -166,7 +97,10 @@ Full architecture, sequence diagrams, and a worked example session are in
 pytest
 ```
 
-80 tests cover hashing, Merkle proof correctness (including odd-leaf-count trees), hash-chain tamper detection, ECDSA sign/verify, encrypted storage (including AEAD row-binding), the end-to-end tamper-simulation CLI, headless smoke tests for the interactive shell, pure-function coverage of the shell's EncryptedStore bridge (key acquisition, dual-write mirror success/failure, cross-store search merge/tag/divergence), the shell config file (round-trip, corrupt-file handling), filesystem path autofill, and the key-pair confirmation gate (missing/cached/deleted-key scenarios).
+80 tests cover hashing, Merkle proof correctness, hash-chain tamper detection, ECDSA sign/verify, encrypted storage, the tamper-simulation harness, and the interactive shell (menu, forms, store bridge, config, search, key-pair setup).
+
+Full architecture, sequence diagrams, and a worked example session for the interactive shell are in
+[`Doc/CLI_Interactive_Shell_Architecture.md`](Doc/CLI_Interactive_Shell_Architecture.md).
 
 ## Current Phase Status
 
@@ -176,7 +110,7 @@ Completed so far:
 - PRC-I: problem statement, objectives, 10-source literature survey, research gap identification, project abstract
 - Core modules implemented and unit-tested: `hashing.py` (SHA-256), `merkle.py` (tree + inclusion proofs), `hash_chain.py` (append-only, hash-linked, ECDSA-signed custody log), `ecdsa_signer.py`
 - `cli.py` (init-keys, add-evidence, log-event, verify-chain, merkle-root, merkle-proof, shell) and a standalone `verifier.py` that independently re-derives every hash/signature check
-- Scope extensions: SQLite storage with AES-256-GCM encryption at rest (`storage.py`), a tamper-simulation experiment harness (`scripts/tamper_simulation.py`), and an interactive shell (`vcoc.interactive`, §12) over the same one-shot commands, with a persisted key-pair setup gate and filesystem path autofill
+- Scope extensions: SQLite storage with AES-256-GCM encryption at rest (`storage.py`), a tamper-simulation experiment harness (`scripts/tamper_simulation.py`), and an interactive shell (`vcoc.interactive`) over the same one-shot commands, with a persisted key-pair setup gate and filesystem path autofill
 - 80 unit/integration tests, including tamper-detection scenarios for payload, signature, and hash-link corruption, headless shell smoke tests, pure-function store-bridge coverage, and the shell's config/autofill/key-gate coverage
 
 ### Repository Layout
