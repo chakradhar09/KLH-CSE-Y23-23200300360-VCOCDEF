@@ -1,0 +1,24 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0005-SYNTHETIC
+Artifact Type    : network-capture-summary (beacon traffic)
+Simulated Source : eth0.pcap (synthetic, flow summary)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED BEACON FLOW SUMMARY ---
+2026-01-04T14:03:49Z TCP 10.0.0.5:51612 -> 203.0.113.9:443 [TLS ClientHello, JA3: synthetic-hash]
+2026-01-04T14:08:49Z TCP 10.0.0.5:51640 -> 203.0.113.9:443 [TLS ClientHello, JA3: synthetic-hash]
+2026-01-04T14:13:49Z TCP 10.0.0.5:51668 -> 203.0.113.9:443 [TLS ClientHello, JA3: synthetic-hash]
+Interval: ~300s -- flagged: consistent with C2 beaconing pattern
+--- END SIMULATED BEACON FLOW SUMMARY ---
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.

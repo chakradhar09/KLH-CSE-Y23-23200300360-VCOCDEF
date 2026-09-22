@@ -1,0 +1,26 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0005-SYNTHETIC
+Artifact Type    : memory-dump-excerpt (process list)
+Simulated Source : C:\workstation.raw (synthetic, offset 0x1F4A0000)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED PROCESS LIST ---
+PID   PPID  NAME                 CMDLINE
+612   4     lsass.exe            C:\Windows\System32\lsass.exe
+1188  612   winlogon.exe         winlogon.exe
+2244  1188  explorer.exe         C:\Windows\explorer.exe
+3310  2244  powershell.exe       powershell.exe -enc <base64 redacted>
+3388  3310  conhost.exe          \??\C:\Windows\system32\conhost.exe
+--- END SIMULATED PROCESS LIST ---
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.

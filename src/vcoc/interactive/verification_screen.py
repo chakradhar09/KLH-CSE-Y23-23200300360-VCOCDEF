@@ -63,8 +63,9 @@ def _run_evidence_check() -> tuple[list[str], list[list[str]]]:
     if not index:
         return ["No evidence registered"], [["evidence_index.json is empty or missing."]]
     entries = _load_json(cli_module.DEFAULT_LOG) or []
+    folder_index = _load_json(cli_module.DEFAULT_FOLDER_INDEX) or {}
 
-    results, root = verifier_module.verify_evidence_index(index, entries)
+    results, root = verifier_module.verify_evidence_index(index, entries, folder_index=folder_index)
     rows = []
     details = []
     for r in results:
@@ -90,15 +91,23 @@ def _run_merkle_check() -> tuple[list[str], list[list[str]]]:
     index = _load_json(cli_module.DEFAULT_EVIDENCE_INDEX)
     if not index:
         return ["No evidence registered"], [["evidence_index.json is empty or missing -- nothing to build a Merkle root from."]]
-    leaves = [rec["sha256"] for _, rec in sorted(index.items())]
+    folder_index = _load_json(cli_module.DEFAULT_FOLDER_INDEX) or {}
+
+    # Group by folder_id (or the record's own id if solo) the same way
+    # cli.py's _build_main_tree does, so this independently recomputed root
+    # matches `merkle-root` for evidence sets containing folder batches.
+    grouped_ids = sorted({rec.get("folder_id") or eid for eid, rec in index.items()})
+    leaves = [
+        folder_index[gid]["root"] if gid in folder_index else index[gid]["sha256"] for gid in grouped_ids
+    ]
     root = verifier_module.merkle_root(leaves)
-    rows = [f"Root over {len(leaves)} leaf(ves)"]
+    rows = [f"Root over {len(leaves)} leaf(ves)/folder(s)"]
     details = [[f"Recomputed Merkle root (from evidence_index.json, independent implementation):", root]]
 
     proof_path = "proof.json"
     if Path(proof_path).exists():
         proof_data = _load_json(proof_path)
-        proof_ok = verifier_module.verify_merkle_proof(proof_data["leaf"], proof_data["proof"], proof_data["root"])
+        proof_ok = verifier_module.verify_nested_proof(proof_data["leaf"], proof_data["proof"], proof_data["root"])
         eid = proof_data.get("evidence_id", "<unknown>")
         rows.append(f"{'OK' if proof_ok else 'TAMPER'}  proof.json ({eid})")
         details.append(

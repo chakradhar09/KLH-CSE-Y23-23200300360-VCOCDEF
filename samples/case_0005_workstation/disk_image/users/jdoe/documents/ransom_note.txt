@@ -1,0 +1,23 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0005-SYNTHETIC
+Artifact Type    : disk-image-fragment (dropped file, user document)
+Simulated Source : C:\Users\jdoe\Documents\READ_ME_NOW.txt (synthetic)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED DOCUMENT CONTENT ---
+[SIMULATED -- CONTENT IS ENTIRELY FICTIONAL, NO REAL THREAT]
+Your files have been encrypted. Contact synthetic-actor@example.test
+Reference ID: SYNTH-0005-DROP
+--- END SIMULATED DOCUMENT CONTENT ---
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.

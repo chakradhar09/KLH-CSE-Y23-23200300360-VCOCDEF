@@ -1,0 +1,23 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0005-SYNTHETIC
+Artifact Type    : network-capture-summary (DNS queries)
+Simulated Source : eth0.pcap (synthetic, DNS extract)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED DNS QUERY LOG ---
+2026-01-04T14:03:40Z A?    update-cdn.example-malicious.test  -> 203.0.113.9
+2026-01-04T14:03:41Z A?    mail.example.com                   -> 198.51.100.20
+2026-01-04T14:05:12Z TXT?  update-cdn.example-malicious.test  -> "beacon-interval=300"
+--- END SIMULATED DNS QUERY LOG ---
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.

@@ -17,9 +17,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import argparse
+
 from vcoc.ecdsa_signer import generate_keypair, save_keypair
 from vcoc.hash_chain import HashChain
-from vcoc.interactive import verification_screen
+from vcoc.interactive import menu, verification_screen
+
+import cli as cli_module
 
 
 def _write_signed_log(log_path: Path, signing_key) -> None:
@@ -75,3 +79,100 @@ def test_chain_check_reports_missing_key_at_configured_path(tmp_path, monkeypatc
     rows, details = verification_screen._run_chain_check(shell_config)
 
     assert rows == ["No public key found"]
+
+
+# --- Reported bugs: "Merkle root" section throws an error, and the
+# Verification screen's "Evidence" tab is broken -- both introduced by
+# Phase 5 (folder batch registration / nested Merkle proofs) changing
+# cmd_merkle_root's and verify_evidence_index's signatures without
+# updating menu.py's _defaults()/verification_screen.py to match. ---
+
+
+def test_menu_action_merkle_root_does_not_crash_on_missing_folder_index_attr(tmp_path, monkeypatch):
+    """Bug repro: action_merkle_root -> cmd_merkle_root now reads
+    args.folder_index, but menu._defaults() never sets it, so every call
+    fails with AttributeError (surfaced in-shell as 'Error: ...')."""
+    monkeypatch.chdir(tmp_path)
+    f = tmp_path / "solo.bin"
+    f.write_bytes(b"solo-content")
+    cli_module.cmd_add_evidence(
+        argparse.Namespace(
+            file=str(f),
+            evidence_id="EV001",
+            evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
+            folder_index=cli_module.DEFAULT_FOLDER_INDEX,
+            log=cli_module.DEFAULT_LOG,
+            private_key=None,
+            actor=None,
+        )
+    )
+
+    ns = menu._defaults()
+    output = menu._run_cmd(cli_module.cmd_merkle_root, ns)
+
+    assert "Error" not in output
+    assert "Merkle root" in output
+
+
+def test_verification_screen_evidence_tab_handles_folder_batch_records(tmp_path, monkeypatch):
+    """Bug repro: verify_evidence_index groups by folder_id and looks up
+    folder_index[gid]["root"] for any grouped id not in evidence_index --
+    but _run_evidence_check() never loads/passes folder_index.json, so a
+    folder-registered evidence set raises KeyError instead of rendering."""
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "batchdir"
+    folder.mkdir()
+    (folder / "a.txt").write_bytes(b"a-content")
+    (folder / "b.txt").write_bytes(b"b-content")
+    cli_module.cmd_add_evidence(
+        argparse.Namespace(
+            file=str(folder),
+            evidence_id="BATCH1",
+            evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
+            folder_index=cli_module.DEFAULT_FOLDER_INDEX,
+            log=cli_module.DEFAULT_LOG,
+            private_key=None,
+            actor=None,
+        )
+    )
+
+    rows, details = verification_screen._run_evidence_check()
+
+    assert not any("Error" in r or "Traceback" in r for r in rows)
+    assert any("BATCH1" in r for r in rows)
+
+
+def test_verification_screen_merkle_tab_verifies_nested_proof_format(tmp_path, monkeypatch):
+    """Bug repro: _run_merkle_check()'s proof.json check calls
+    verifier.verify_merkle_proof(proof_data["proof"], ...) expecting a flat
+    list of {sibling, is_left} steps, but cmd_merkle_proof now writes the
+    nested {"local_proof": ..., "subtree_root": ..., "folder_proof": ...}
+    dict -- iterating that dict as if it were a list of steps and indexing
+    step["is_left"] on a string key raises TypeError."""
+    monkeypatch.chdir(tmp_path)
+    f = tmp_path / "solo.bin"
+    f.write_bytes(b"solo-content")
+    cli_module.cmd_add_evidence(
+        argparse.Namespace(
+            file=str(f),
+            evidence_id="EV001",
+            evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
+            folder_index=cli_module.DEFAULT_FOLDER_INDEX,
+            log=cli_module.DEFAULT_LOG,
+            private_key=None,
+            actor=None,
+        )
+    )
+    cli_module.cmd_merkle_proof(
+        argparse.Namespace(
+            evidence_id="EV001",
+            evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
+            folder_index=cli_module.DEFAULT_FOLDER_INDEX,
+            out="proof.json",
+        )
+    )
+
+    rows, details = verification_screen._run_merkle_check()
+
+    assert not any("Error" in r or "Traceback" in r for r in rows)
+    assert any(r.startswith("OK") for r in rows if "proof.json" in r)

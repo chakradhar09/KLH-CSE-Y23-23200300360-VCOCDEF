@@ -17,7 +17,6 @@ from .verification_screen import run_verification_screen
 
 MENU_ITEMS = [
     "Add evidence",
-    "Search / browse evidence",
     "Check evidence integrity",
     "Log custody event",
     "Verify chain",
@@ -51,6 +50,7 @@ def _defaults() -> argparse.Namespace:
     """A namespace pre-filled with build_parser()'s own defaults."""
     return argparse.Namespace(
         evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
+        folder_index=cli_module.DEFAULT_FOLDER_INDEX,
         log=cli_module.DEFAULT_LOG,
         private_key=cli_module.DEFAULT_PRIVATE_KEY,
         public_key=cli_module.DEFAULT_PUBLIC_KEY,
@@ -107,36 +107,58 @@ def action_add_evidence(store: EncryptedStore | None, shell_config: dict) -> Non
     evidence_id = forms.prompt_text("Add evidence", "Evidence ID:")
     if evidence_id is None:
         return
+    is_folder = Path(file_path).is_dir()
+
     ns = _defaults()
     ns.file = file_path
     ns.evidence_id = evidence_id
+    ns.folder_index = cli_module.DEFAULT_FOLDER_INDEX
+    ns.actor = None
+    ns.private_key = None
+
+    if is_folder and forms.confirm(f"Log a batch-register custody event for {evidence_id}?"):
+        if not ensure_keys(shell_config):
+            return
+        ns.private_key = shell_config["private_key"]
+        ns.log = shell_config.get("log", cli_module.DEFAULT_LOG)
+        actor = forms.prompt_text("Add evidence", "Actor:")
+        if actor is None:
+            return
+        ns.actor = actor
+
     output = _run_cmd(cli_module.cmd_add_evidence, ns)
 
     if store is not None:
-        index = cli_module._load_evidence_index(ns.evidence_index)
-        rec = index.get(evidence_id)
-        if rec is not None:
-            from vcoc.models import Evidence
+        from vcoc.models import Evidence
 
-            err = store_bridge.mirror_to_store(store, Evidence(**rec))
-            output += "\n" + (f"Warning: {err}" if err else f"Mirrored {evidence_id} to store")
+        index = cli_module._load_evidence_index(ns.evidence_index)
+        if is_folder:
+            member_ids = [eid for eid, rec in index.items() if rec.get("folder_id") == evidence_id]
+            mirrored, failed = 0, 0
+            for member_id in member_ids:
+                err = store_bridge.mirror_to_store(store, Evidence(**index[member_id]))
+                if err:
+                    failed += 1
+                else:
+                    mirrored += 1
+            output += f"\nMirrored {mirrored}/{len(member_ids)} folder member(s) to store"
+            if failed:
+                output += f" ({failed} failed)"
+        else:
+            rec = index.get(evidence_id)
+            if rec is not None:
+                err = store_bridge.mirror_to_store(store, Evidence(**rec))
+                output += "\n" + (f"Warning: {err}" if err else f"Mirrored {evidence_id} to store")
 
     forms.show_output("Add evidence", output)
-
-
-def action_search(store: EncryptedStore | None, shell_config: dict) -> None:
-    _pick_evidence_id(store)
 
 
 def action_check_evidence(store: EncryptedStore | None, shell_config: dict) -> None:
     evidence_id = _pick_evidence_id(store)
     if evidence_id is None:
         return
-    file_path = forms.prompt_path("Check evidence integrity", "File path:")
-    if file_path is None:
-        return
     ns = _defaults()
-    ns.file = file_path
+    ns.file = None
     ns.evidence_id = evidence_id
     output = _run_cmd(cli_module.cmd_check_evidence, ns)
     forms.show_output("Check evidence integrity", output)
@@ -211,7 +233,6 @@ def action_verification(store: EncryptedStore | None, shell_config: dict) -> Non
 
 ACTIONS = [
     action_add_evidence,
-    action_search,
     action_check_evidence,
     action_log_event,
     action_verify_chain,

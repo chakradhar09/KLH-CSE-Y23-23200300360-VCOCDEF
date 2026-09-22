@@ -1,0 +1,24 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0005-SYNTHETIC
+Artifact Type    : memory-dump-excerpt (loaded modules, suspect process)
+Simulated Source : C:\workstation.raw (synthetic, PID 3310 module list)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED LOADED MODULE LIST (PID 3310) ---
+BASE            SIZE      NAME
+0x00007FF6A0000 0x21000   powershell.exe
+0x00007FFB10000 0x1C4000  clr.dll
+0x00007FFA88000 0x03000   unbacked_0x7ffa88000    # flagged: no backing file (possible injection)
+--- END SIMULATED LOADED MODULE LIST ---
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.

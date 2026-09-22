@@ -25,6 +25,7 @@ evidence_index.json
 *.key
 proof*.json
 tamper_results.json
+shell_config.json
 
 # Node deps for the docx-generation build scripts
 Doc/paper_draft_build
@@ -32,4 +33,5 @@ Doc/experiment_results
 /Doc/PRC-2_Experimental_Results.md
 /Doc/PRC-2_Paper_Draft.docx
 /Doc/PRC-2_Plan.md
-Doc/myxmhdsbzkyd.pdf
+/Doc/myxmhdsbzkyd.pdf
+/Doc/Research_Paper_Draft_v2.docx

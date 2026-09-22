@@ -15,6 +15,7 @@ class Evidence:
     size_bytes: int
     added_at: str  # ISO 8601 UTC timestamp
     source_path: str = field(default="")  # resolved path at collection time
+    folder_id: str | None = field(default=None)  # set when registered as part of a folder batch
 
 
 @dataclass

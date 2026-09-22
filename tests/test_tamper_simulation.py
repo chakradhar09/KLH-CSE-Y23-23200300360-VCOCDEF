@@ -5,7 +5,7 @@ from pathlib import Path
 
 from vcoc.ecdsa_signer import generate_keypair, save_keypair
 from vcoc.hash_chain import HashChain
-from vcoc.merkle import MerkleTree, proof_to_dict
+from vcoc.merkle import MerkleTree, build_nested_proof, nested_proof_to_dict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -87,11 +87,14 @@ def test_standalone_verifier_cli_checks_merkle_proof(tmp_path):
 
     leaves = ["a" * 64, "b" * 64, "c" * 64]
     tree = MerkleTree(leaves)
-    proof = tree.get_proof(1)
+    # No folder batch involved: build_nested_proof(..., folder_tree=None) is
+    # the degenerate single-tree case (subtree_root == root, folder_proof == []),
+    # exercising the real nested-proof format end to end through verifier.py.
+    proof = build_nested_proof(tree, 1, None, None)
     proof_path = tmp_path / "proof.json"
     proof_path.write_text(
         json.dumps(
-            {"evidence_id": "EV_B", "leaf": leaves[1], "root": tree.root, "proof": proof_to_dict(proof)},
+            {"evidence_id": "EV_B", "leaf": leaves[1], "root": tree.root, "proof": nested_proof_to_dict(proof)},
             indent=2,
         ),
         encoding="utf-8",

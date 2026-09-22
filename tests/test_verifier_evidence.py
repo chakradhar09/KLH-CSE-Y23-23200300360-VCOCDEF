@@ -8,7 +8,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from verifier import EvidenceCheckResult, merkle_root, sha256_hex, verify_evidence_index
+import cli as cli_module
+from vcoc.merkle import verify_nested_proof
+from verifier import (
+    EvidenceCheckResult,
+    merkle_root,
+    sha256_hex,
+    verify_evidence_index,
+    verify_merkle_proof,
+    verify_nested_proof as verifier_verify_nested_proof,
+)
 
 
 def test_verify_evidence_index_match_and_logged(tmp_path):
@@ -90,3 +99,87 @@ def test_merkle_root_rejects_empty():
 
     with pytest.raises(ValueError):
         merkle_root([])
+
+
+def test_verifier_own_nested_proof_verifies_degenerate_case():
+    """verifier.py's own verify_nested_proof, independent of vcoc.merkle,
+    must accept the same degenerate (no-folder) proof shape cli.py emits."""
+    from vcoc.merkle import build_nested_proof, MerkleTree, nested_proof_to_dict
+
+    tree = MerkleTree([sha256_hex(b"a"), sha256_hex(b"b"), sha256_hex(b"c")])
+    proof = build_nested_proof(tree, 1, None, None)
+    proof_dict = nested_proof_to_dict(proof)
+
+    assert verifier_verify_nested_proof(tree.leaves[1], proof_dict, tree.root)
+
+
+def test_verifier_own_nested_proof_verifies_two_hop_case():
+    from vcoc.merkle import build_nested_proof, MerkleTree, nested_proof_to_dict
+
+    folder_tree = MerkleTree([sha256_hex(b"x"), sha256_hex(b"y")])
+    main_tree = MerkleTree([folder_tree.root, sha256_hex(b"z")])
+    proof = build_nested_proof(folder_tree, 0, main_tree, 0)
+    proof_dict = nested_proof_to_dict(proof)
+
+    assert verifier_verify_nested_proof(folder_tree.leaves[0], proof_dict, main_tree.root)
+
+
+def test_verifier_own_nested_proof_rejects_tampered_leaf():
+    from vcoc.merkle import build_nested_proof, MerkleTree, nested_proof_to_dict
+
+    tree = MerkleTree([sha256_hex(b"a"), sha256_hex(b"b"), sha256_hex(b"c")])
+    proof = build_nested_proof(tree, 1, None, None)
+    proof_dict = nested_proof_to_dict(proof)
+
+    assert not verifier_verify_nested_proof(sha256_hex(b"not-the-real-leaf"), proof_dict, tree.root)
+
+
+def test_verify_evidence_index_groups_folder_batch_into_single_root(tmp_path):
+    """A folder-registered evidence set must recompute the same grouped root
+    verifier.py and cli.py's _build_main_tree independently agree on."""
+    monkey_cwd = tmp_path
+    import os
+
+    old_cwd = os.getcwd()
+    os.chdir(monkey_cwd)
+    try:
+        folder = monkey_cwd / "batchdir"
+        folder.mkdir()
+        (folder / "a.txt").write_bytes(b"a-content")
+        (folder / "b.txt").write_bytes(b"b-content")
+        (monkey_cwd / "solo.bin").write_bytes(b"solo-content")
+
+        import argparse
+
+        cli_module.cmd_add_evidence(
+            argparse.Namespace(
+                file=str(folder),
+                evidence_id="BATCH1",
+                evidence_index="evidence_index.json",
+                folder_index="folder_index.json",
+                log="custody_log.json",
+                private_key=None,
+                actor=None,
+            )
+        )
+        cli_module.cmd_add_evidence(
+            argparse.Namespace(
+                file=str(monkey_cwd / "solo.bin"),
+                evidence_id="SOLO1",
+                evidence_index="evidence_index.json",
+                folder_index="folder_index.json",
+                log="custody_log.json",
+                private_key=None,
+                actor=None,
+            )
+        )
+
+        evidence_index = cli_module._load_evidence_index("evidence_index.json")
+        folder_index = cli_module._load_folder_index("folder_index.json")
+        cli_tree, _ = cli_module._build_main_tree(evidence_index, folder_index)
+
+        _, verifier_root = verify_evidence_index(evidence_index, [], folder_index=folder_index)
+    finally:
+        os.chdir(old_cwd)
+
+    assert verifier_root == cli_tree.root

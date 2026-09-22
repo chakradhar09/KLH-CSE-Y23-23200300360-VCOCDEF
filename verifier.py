@@ -84,6 +84,26 @@ def verify_merkle_proof(leaf: str, proof: list[dict], root: str) -> bool:
     return computed == root
 
 
+def verify_nested_proof(leaf: str, proof: dict, root: str) -> bool:
+    """Recompute both hops of a nested (file -> subtree root -> main root)
+    proof, independently of ``vcoc.merkle.verify_nested_proof`` -- this
+    module re-implements every check from scratch by design (see module
+    docstring), so a bug in the logging tool's proof format can't silently
+    propagate into a false "verified" result here.
+
+    ``proof`` is the dict shape ``vcoc.merkle.nested_proof_to_dict`` produces:
+    ``{"local_proof": [...], "subtree_root": str, "folder_proof": [...]}``.
+    A record not part of a folder batch has an empty ``folder_proof`` and
+    ``subtree_root == root`` -- the single-tree case is this format's literal
+    degenerate case, not a separate one.
+    """
+    if not verify_merkle_proof(leaf, proof["local_proof"], proof["subtree_root"]):
+        return False
+    if not proof["folder_proof"]:
+        return proof["subtree_root"] == root
+    return verify_merkle_proof(proof["subtree_root"], proof["folder_proof"], root)
+
+
 def merkle_root(leaves: list[str]) -> str:
     """Recompute a Merkle root from ordered leaf hashes, from scratch."""
     if not leaves:
@@ -116,7 +136,7 @@ class EvidenceCheckResult:
 
 
 def verify_evidence_index(
-    index: dict, custody_entries: list[dict]
+    index: dict, custody_entries: list[dict], folder_index: dict | None = None
 ) -> tuple[list[EvidenceCheckResult], str | None]:
     """Independently re-check every evidence record in ``evidence_index.json``.
 
@@ -124,10 +144,15 @@ def verify_evidence_index(
     on disk (a missing/moved file is reported, not treated as tamper -- the
     file may simply have been archived elsewhere since collection), and
     confirm at least one custody_log.json entry references the evidence_id.
-    Also recomputes the Merkle root over all recorded hashes.
+    Also recomputes the main Merkle root, grouping any folder-batch records
+    (``rec["folder_id"]`` set) under their precomputed subtree root from
+    ``folder_index`` -- the same grouping ``cli.py``'s ``_build_main_tree``
+    performs, recomputed here independently so the two can never silently
+    drift apart (folder-batch registration, evidence-index.json schema).
 
     Returns (per-evidence results, recomputed root or None if index empty).
     """
+    folder_index = folder_index or {}
     logged_ids = {entry["evidence_id"] for entry in custody_entries}
 
     results = []
@@ -156,7 +181,11 @@ def verify_evidence_index(
 
     if not index:
         return results, None
-    leaves = [rec["sha256"] for _, rec in sorted(index.items())]
+    grouped_ids = sorted({rec.get("folder_id") or eid for eid, rec in index.items()})
+    leaves = [
+        folder_index[gid]["root"] if gid in folder_index else index[gid]["sha256"]
+        for gid in grouped_ids
+    ]
     return results, merkle_root(leaves)
 
 
@@ -169,6 +198,11 @@ def main(argv: list[str] | None = None) -> None:
         "--evidence-index",
         default=None,
         help="Optional path to evidence_index.json to independently re-verify every registered evidence file",
+    )
+    parser.add_argument(
+        "--folder-index",
+        default=None,
+        help="Optional path to folder_index.json, used with --evidence-index to group folder batches",
     )
     args = parser.parse_args(argv)
 
@@ -187,7 +221,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.merkle_proof:
         print("\n== Merkle inclusion proof ==")
         proof_data = json.loads(Path(args.merkle_proof).read_text(encoding="utf-8"))
-        merkle_ok = verify_merkle_proof(proof_data["leaf"], proof_data["proof"], proof_data["root"])
+        merkle_ok = verify_nested_proof(proof_data["leaf"], proof_data["proof"], proof_data["root"])
         evidence_id = proof_data.get("evidence_id", "<unknown>")
         if merkle_ok:
             print(f"OK: Merkle inclusion proof for {evidence_id} verified against root {proof_data['root']}.")
@@ -198,7 +232,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.evidence_index:
         print("\n== Evidence verification ==")
         index = json.loads(Path(args.evidence_index).read_text(encoding="utf-8"))
-        results, root = verify_evidence_index(index, entries)
+        folder_index = (
+            json.loads(Path(args.folder_index).read_text(encoding="utf-8"))
+            if args.folder_index and Path(args.folder_index).exists()
+            else {}
+        )
+        results, root = verify_evidence_index(index, entries, folder_index=folder_index)
         if not results:
             print("No evidence registered.")
         for r in results:

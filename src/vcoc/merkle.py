@@ -82,3 +82,60 @@ def proof_to_dict(proof: list[ProofStep]) -> list[dict]:
 
 def proof_from_dict(data: list[dict]) -> list[ProofStep]:
     return [ProofStep(sibling=d["sibling"], is_left=bool(d["is_left"])) for d in data]
+
+
+@dataclass(frozen=True)
+class NestedProof:
+    """A two-hop inclusion proof: file leaf -> subtree root -> main root.
+
+    For evidence that isn't part of a folder batch, ``subtree_root`` equals
+    the main root and ``folder_proof`` is empty -- the single-tree case is a
+    literal degenerate nested proof, not a separate format.
+    """
+
+    local_proof: list[ProofStep]
+    subtree_root: str
+    folder_proof: list[ProofStep]
+
+
+def build_nested_proof(
+    local_tree: MerkleTree,
+    local_index: int,
+    folder_tree: MerkleTree | None,
+    folder_index: int | None,
+) -> NestedProof:
+    """Build a proof for ``local_tree``'s leaf, optionally nested under ``folder_tree``.
+
+    Pass ``folder_tree=None`` when the leaf isn't part of a folder batch --
+    ``local_tree`` is then the main tree itself.
+    """
+    local_proof = local_tree.get_proof(local_index)
+    if folder_tree is None:
+        return NestedProof(local_proof=local_proof, subtree_root=local_tree.root, folder_proof=[])
+    folder_proof = folder_tree.get_proof(folder_index)
+    return NestedProof(local_proof=local_proof, subtree_root=local_tree.root, folder_proof=folder_proof)
+
+
+def verify_nested_proof(leaf: str, proof: NestedProof, root: str) -> bool:
+    """Recompute both hops from ``leaf`` and ``proof`` and compare to ``root``."""
+    if not verify_proof(leaf, proof.local_proof, proof.subtree_root):
+        return False
+    if not proof.folder_proof:
+        return proof.subtree_root == root
+    return verify_proof(proof.subtree_root, proof.folder_proof, root)
+
+
+def nested_proof_to_dict(proof: NestedProof) -> dict:
+    return {
+        "local_proof": proof_to_dict(proof.local_proof),
+        "subtree_root": proof.subtree_root,
+        "folder_proof": proof_to_dict(proof.folder_proof),
+    }
+
+
+def nested_proof_from_dict(data: dict) -> NestedProof:
+    return NestedProof(
+        local_proof=proof_from_dict(data["local_proof"]),
+        subtree_root=data["subtree_root"],
+        folder_proof=proof_from_dict(data["folder_proof"]),
+    )

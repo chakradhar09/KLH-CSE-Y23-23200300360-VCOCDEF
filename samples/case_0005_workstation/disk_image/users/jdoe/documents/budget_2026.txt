@@ -1,0 +1,29 @@
+SYNTHETIC FORENSIC ARTIFACT -- FOR TESTING PURPOSES ONLY
+================================================================
+This file is a synthetic stand-in for a real digital evidence
+artifact (e.g., a disk image fragment, memory dump excerpt, or
+browser history export). It contains no real case data and is
+used solely to exercise the Verifiable Chain-of-Custody CLI,
+the standalone verifier, and the Merkle-proof workflow.
+
+Case Reference   : CASE-0005-SYNTHETIC
+Artifact Type    : disk-image-fragment (benign user document, control sample)
+Simulated Source : C:\Users\jdoe\Documents\budget_2026.txt (synthetic)
+Collected By     : J. Doe (Digital Forensics Examiner)
+Collection Tool  : synthetic-generator v0.1
+
+--- BEGIN SIMULATED DOCUMENT CONTENT ---
+Q1 2026 Household Budget (synthetic, non-evidentiary control sample)
+Rent:        1400.00
+Groceries:    420.00
+Utilities:    180.00
+Savings:      500.00
+--- END SIMULATED DOCUMENT CONTENT ---
+
+Included as a benign control sample alongside the flagged artifacts
+in this case directory, to exercise batch registration over a mixed
+(malicious + benign) evidence set.
+
+Any modification to a single byte of this file will change its
+SHA-256 digest and invalidate the corresponding Merkle inclusion
+proof, which is the property under test.
