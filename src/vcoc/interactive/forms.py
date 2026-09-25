@@ -11,6 +11,7 @@ from pathlib import Path
 
 from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.document import Document
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.key_binding.bindings.scroll import (
     scroll_one_line_down,
@@ -188,6 +189,13 @@ def confirm(question: str) -> bool:
 
 
 def show_output(title: str, text: str) -> None:
+    # scroll_one_line_down/up and scroll_page_down/up move event.app.current_buffer's
+    # cursor -- they need a real Buffer/BufferControl (with a document + cursor) to
+    # scroll at all. A bare FormattedTextControl has neither, so those bindings were
+    # silent no-ops: nothing scrolled, and stdout longer than the window (e.g. a
+    # Merkle proof) was unreachable below the fold.
+    buf = Buffer(document=Document(text, 0), read_only=True)
+
     kb = KeyBindings()
 
     # Scroll keys are registered as exact bindings so they take priority over
@@ -202,10 +210,13 @@ def show_output(title: str, text: str) -> None:
     def _(event):
         event.app.exit()
 
-    control = FormattedTextControl(text + "\n\n[↑/↓/PgUp/PgDn scroll   any other key returns to menu]")
-    window = Window(control, wrap_lines=True, allow_scroll_beyond_bottom=True)
+    footer = Window(
+        FormattedTextControl(lambda: " ↑/↓/PgUp/PgDn scroll   any other key returns to menu"),
+        height=1,
+    )
+    window = Window(BufferControl(buffer=buf, focusable=True), wrap_lines=True, allow_scroll_beyond_bottom=True)
     app = Application(
-        layout=Layout(Frame(window, title=title)),
+        layout=Layout(HSplit([Frame(window, title=title), footer]), focused_element=window),
         key_bindings=kb,
         full_screen=True,
     )
