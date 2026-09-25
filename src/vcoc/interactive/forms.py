@@ -12,6 +12,12 @@ from pathlib import Path
 from prompt_toolkit import Application
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.key_binding.bindings.scroll import (
+    scroll_one_line_down,
+    scroll_one_line_up,
+    scroll_page_down,
+    scroll_page_up,
+)
 from prompt_toolkit.layout import HSplit, Layout, Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import D
@@ -184,13 +190,22 @@ def confirm(question: str) -> bool:
 def show_output(title: str, text: str) -> None:
     kb = KeyBindings()
 
+    # Scroll keys are registered as exact bindings so they take priority over
+    # the "<any>" catch-all below; every other key still dismisses the screen
+    # (existing behavior long menu items rely on, e.g. "x" to dismiss).
+    kb.add("down")(scroll_one_line_down)
+    kb.add("up")(scroll_one_line_up)
+    kb.add("pagedown")(scroll_page_down)
+    kb.add("pageup")(scroll_page_up)
+
     @kb.add("<any>")
     def _(event):
         event.app.exit()
 
-    control = FormattedTextControl(lambda: text + "\n\n[press any key to return to menu]")
+    control = FormattedTextControl(text + "\n\n[↑/↓/PgUp/PgDn scroll   any other key returns to menu]")
+    window = Window(control, wrap_lines=True, allow_scroll_beyond_bottom=True)
     app = Application(
-        layout=Layout(Frame(Window(control), title=title)),
+        layout=Layout(Frame(window, title=title)),
         key_bindings=kb,
         full_screen=True,
     )
