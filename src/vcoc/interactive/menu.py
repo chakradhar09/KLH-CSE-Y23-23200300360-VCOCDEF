@@ -12,8 +12,8 @@ from vcoc.storage import EncryptedStore
 
 from . import config as config_module
 from . import forms, store_bridge
-from .evidence_search import search_evidence
-from .verification_screen import run_verification_screen
+from .evidence_search import search_evidence, search_evidence_multi
+from .verification_screen import run_verification_screen, run_verify_chain_screen
 
 MENU_ITEMS = [
     "Add evidence",
@@ -167,8 +167,9 @@ def action_check_evidence(store: EncryptedStore | None, shell_config: dict) -> N
 def action_log_event(store: EncryptedStore | None, shell_config: dict) -> None:
     if not ensure_keys(shell_config):
         return
-    evidence_id = _pick_evidence_id(store)
-    if evidence_id is None:
+    index = cli_module._load_evidence_index(cli_module.DEFAULT_EVIDENCE_INDEX)
+    evidence_ids = search_evidence_multi(index, store)
+    if evidence_ids is None:
         return
     actor = forms.prompt_text("Log custody event", "Actor:")
     if actor is None:
@@ -177,10 +178,26 @@ def action_log_event(store: EncryptedStore | None, shell_config: dict) -> None:
     if action is None:
         return
     ns = _defaults()
-    ns.evidence_id = evidence_id
+    ns.evidence_id = evidence_ids
     ns.actor = actor
     ns.action = action
     ns.private_key = shell_config["private_key"]
+    ns.case_number = None
+    ns.tag = None
+    ns.notes = None
+    if len(evidence_ids) > 1:
+        case_number = forms.prompt_text("Log custody event", "Case number (optional):")
+        if case_number is None:
+            return
+        tag = forms.prompt_text("Log custody event", "Tag (optional):")
+        if tag is None:
+            return
+        notes = forms.prompt_text("Log custody event", "Notes (optional):")
+        if notes is None:
+            return
+        ns.case_number = case_number or None
+        ns.tag = tag or None
+        ns.notes = notes or None
     output = _run_cmd(cli_module.cmd_log_event, ns)
     forms.show_output("Log custody event", output)
 
@@ -188,10 +205,7 @@ def action_log_event(store: EncryptedStore | None, shell_config: dict) -> None:
 def action_verify_chain(store: EncryptedStore | None, shell_config: dict) -> None:
     if not ensure_keys(shell_config):
         return
-    ns = _defaults()
-    ns.public_key = shell_config["public_key"]
-    output = _run_cmd(cli_module.cmd_verify_chain, ns)
-    forms.show_output("Verify chain", output)
+    run_verify_chain_screen(shell_config)
 
 
 def action_merkle_root(store: EncryptedStore | None, shell_config: dict) -> None:

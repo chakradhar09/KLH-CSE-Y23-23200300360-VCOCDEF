@@ -18,6 +18,7 @@ from prompt_toolkit.widgets import Frame
 
 import cli as cli_module
 import verifier as verifier_module
+from vcoc.visualize import build_chain_view, format_entry_detail_lines
 
 TABS = ["Chain", "Evidence", "Merkle"]
 
@@ -31,6 +32,12 @@ def _load_json(path: str) -> object | None:
 
 def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[str]]:
     """Returns (sidebar rows, detail lines per row -- parallel lists).
+
+    One row per custody event (not one aggregate row), so the sidebar can be
+    navigated the same way the Evidence tab's one-row-per-record list
+    already is. Each row's detail pane shows the same rich per-entry info
+    verify-chain's CLI output has: both hashes, a truncated signature, and
+    an independent per-entry OK/TAMPER status.
 
     public_key_path comes from shell_config["public_key"] when the shell
     has one configured (via menu.ensure_keys, Task 8) -- that's the same
@@ -48,14 +55,22 @@ def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[
     from ecdsa import VerifyingKey
 
     verifying_key = VerifyingKey.from_pem(Path(public_key_path).read_bytes())
-    ok, break_index, reason = verifier_module.verify_chain(entries, verifying_key)
-    if ok:
-        row = f"OK  chain of {len(entries)} entries"
-        detail = [f"Chain verified independently ({reason}).", f"{len(entries)} entries checked."]
-    else:
-        row = f"TAMPER  entry #{break_index}"
-        detail = [f"TAMPER DETECTED at entry #{break_index}: {reason}"]
-    return [row], [detail]
+    if not entries:
+        return ["No custody events logged yet"], [["custody_log.json is empty."]]
+
+    per_entry = verifier_module.verify_each(entries, verifying_key)
+    chain_view = build_chain_view(entries)
+
+    rows = []
+    details = []
+    for entry, verification in zip(chain_view, per_entry):
+        eids = ", ".join(entry["evidence_ids"])
+        target = f"[{eids}]" if len(entry["evidence_ids"]) > 1 else eids
+        marker = "OK  " if verification.ok else "TAMPER  "
+        rows.append(f"{marker}#{entry['index']} {entry['action']} on {target}")
+        details.append(format_entry_detail_lines(entry, verification=verification))
+
+    return rows, details
 
 
 def _run_evidence_check() -> tuple[list[str], list[list[str]]]:
@@ -121,30 +136,29 @@ def _run_merkle_check() -> tuple[list[str], list[list[str]]]:
     return rows, details
 
 
-def run_verification_screen(shell_config: dict | None = None) -> None:
-    tab_runners = [
-        lambda: _run_chain_check(shell_config),
-        _run_evidence_check,
-        _run_merkle_check,
-    ]
-    active_tab = [0]
+def _run_sidebar_detail_app(
+    title: str,
+    load_rows: "callable[[], tuple[list[str], list[list[str]]]]",
+    top_bar: "callable[[], str] | None" = None,
+    extra_keybindings: "callable[[object], None] | None" = None,
+    help_text: str = " ↑/↓ select   Ctrl-R/F5 refresh   Esc/q back",
+) -> None:
+    """Shared sidebar (list of rows) + detail pane (lines for the selected
+    row) full-screen application. `load_rows()` is called on open and on
+    every manual refresh; `top_bar`/`extra_keybindings` let a caller add a
+    tab bar and tab-switching keys on top of the same base screen, without
+    duplicating the sidebar/detail/navigation plumbing.
+    """
     selected_row = [0]
     rows: list[str] = []
     details: list[list[str]] = []
 
-    def load_tab():
+    def load():
         nonlocal rows, details
-        rows, details = tab_runners[active_tab[0]]()
+        rows, details = load_rows()
         selected_row[0] = 0
 
-    load_tab()
-
-    def render_top_bar() -> str:
-        parts = []
-        for i, name in enumerate(TABS):
-            label = f" {name} "
-            parts.append(f"[{label}]" if i == active_tab[0] else f" {label} ")
-        return "".join(parts)
+    load()
 
     def render_sidebar() -> str:
         lines = []
@@ -160,32 +174,8 @@ def run_verification_screen(shell_config: dict | None = None) -> None:
 
     kb = KeyBindings()
 
-    @kb.add("tab")
-    @kb.add("right")
-    def _(event):
-        active_tab[0] = (active_tab[0] + 1) % len(TABS)
-        load_tab()
-
-    @kb.add("s-tab")
-    @kb.add("left")
-    def _(event):
-        active_tab[0] = (active_tab[0] - 1) % len(TABS)
-        load_tab()
-
-    @kb.add("1")
-    def _(event):
-        active_tab[0] = 0
-        load_tab()
-
-    @kb.add("2")
-    def _(event):
-        active_tab[0] = 1
-        load_tab()
-
-    @kb.add("3")
-    def _(event):
-        active_tab[0] = 2
-        load_tab()
+    if extra_keybindings is not None:
+        extra_keybindings(kb, load)
 
     @kb.add("up")
     def _(event):
@@ -200,7 +190,7 @@ def run_verification_screen(shell_config: dict | None = None) -> None:
     @kb.add("c-r")
     @kb.add("f5")
     def _(event):
-        load_tab()
+        load()
 
     @kb.add("escape")
     @kb.add("q")
@@ -208,10 +198,13 @@ def run_verification_screen(shell_config: dict | None = None) -> None:
     def _(event):
         event.app.exit()
 
+    top_rows = []
+    if top_bar is not None:
+        top_rows = [Window(FormattedTextControl(top_bar), height=1), Window(height=1, char="─")]
+
     body = HSplit(
         [
-            Window(FormattedTextControl(render_top_bar), height=1),
-            Window(height=1, char="─"),
+            *top_rows,
             VSplit(
                 [
                     Window(FormattedTextControl(render_sidebar), width=D(min=28, max=40)),
@@ -220,17 +213,73 @@ def run_verification_screen(shell_config: dict | None = None) -> None:
                 ]
             ),
             Window(height=1, char="─"),
-            Window(
-                FormattedTextControl(
-                    lambda: " Tab/←→ switch section   1-3 jump   ↑/↓ select   Ctrl-R/F5 refresh   Esc/q back"
-                ),
-                height=1,
-            ),
+            Window(FormattedTextControl(lambda: help_text), height=1),
         ]
     )
     app = Application(
-        layout=Layout(Frame(body, title="Verification")),
+        layout=Layout(Frame(body, title=title)),
         key_bindings=kb,
         full_screen=True,
     )
     app.run()
+
+
+def run_verification_screen(shell_config: dict | None = None) -> None:
+    tab_runners = [
+        lambda: _run_chain_check(shell_config),
+        _run_evidence_check,
+        _run_merkle_check,
+    ]
+    active_tab = [0]
+
+    def render_top_bar() -> str:
+        parts = []
+        for i, name in enumerate(TABS):
+            label = f" {name} "
+            parts.append(f"[{label}]" if i == active_tab[0] else f" {label} ")
+        return "".join(parts)
+
+    def add_tab_keybindings(kb: KeyBindings, load) -> None:
+        @kb.add("tab")
+        @kb.add("right")
+        def _(event):
+            active_tab[0] = (active_tab[0] + 1) % len(TABS)
+            load()
+
+        @kb.add("s-tab")
+        @kb.add("left")
+        def _(event):
+            active_tab[0] = (active_tab[0] - 1) % len(TABS)
+            load()
+
+        @kb.add("1")
+        def _(event):
+            active_tab[0] = 0
+            load()
+
+        @kb.add("2")
+        def _(event):
+            active_tab[0] = 1
+            load()
+
+        @kb.add("3")
+        def _(event):
+            active_tab[0] = 2
+            load()
+
+    _run_sidebar_detail_app(
+        "Verification",
+        lambda: tab_runners[active_tab[0]](),
+        top_bar=render_top_bar,
+        extra_keybindings=add_tab_keybindings,
+        help_text=" Tab/←→ switch section   1-3 jump   ↑/↓ select   Ctrl-R/F5 refresh   Esc/q back",
+    )
+
+
+def run_verify_chain_screen(shell_config: dict | None = None) -> None:
+    """Standalone 'Verify chain' screen: sidebar lists one row per custody
+    event, detail pane shows full per-entry hash/signature/status -- same
+    information the Verification screen's Chain tab shows, but as its own
+    dedicated entry point (menu item 4), not a tab inside a bigger screen.
+    """
+    _run_sidebar_detail_app("Verify Chain", lambda: _run_chain_check(shell_config))

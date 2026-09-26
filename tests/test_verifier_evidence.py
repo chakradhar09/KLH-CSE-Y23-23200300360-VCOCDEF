@@ -42,6 +42,25 @@ def test_verify_evidence_index_match_and_logged(tmp_path):
     assert root == digest  # single-leaf tree: root == the leaf itself
 
 
+def test_verify_evidence_index_logged_via_multi_evidence_event(tmp_path):
+    """An evidence record covered only by a new-shape (evidence_ids) custody
+    entry must be recognized as logged, not flagged NOT LOGGED."""
+    f = tmp_path / "a.bin"
+    f.write_bytes(b"hello")
+    digest = sha256_hex(b"hello")
+    index = {
+        "EV001": {
+            "original_filename": "a.bin",
+            "sha256": digest,
+            "source_path": str(f),
+        }
+    }
+    entries = [{"evidence_ids": ["EV001", "EV002"], "index": 0}]
+
+    results, _ = verify_evidence_index(index, entries)
+    assert results[0].logged_status == "logged"
+
+
 def test_verify_evidence_index_mismatch_detected(tmp_path):
     f = tmp_path / "a.bin"
     f.write_bytes(b"hello")

@@ -50,6 +50,32 @@ def test_shell_verify_chain_then_quit(tmp_path):
     run_with_keys("4" + "\x03" + "q", tmp_path)
 
 
+def test_shell_verify_chain_sidebar_screen_with_keys_present(tmp_path):
+    """Verify chain (menu item 4) is now a sidebar+detail screen, one row
+    per custody event -- navigable with up/down, not a static text dump."""
+    from vcoc.ecdsa_signer import generate_keypair, save_keypair
+    from vcoc.hash_chain import HashChain
+
+    signing_key, _ = generate_keypair()
+    save_keypair(signing_key, tmp_path / "private_key.pem", tmp_path / "public_key.pem")
+
+    chain = HashChain()
+    chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
+    chain.add_event(evidence_id="EV002", actor="A. Smith", action="reviewed", signing_key=signing_key)
+    chain.save(str(tmp_path / "custody_log.json"))
+
+    keys = (
+        "4"  # Verify chain
+        + "\r"  # ensure_keys: accept default private_key.pem path (exists on disk)
+        + "\r"  # ensure_keys: accept default public_key.pem path (exists on disk)
+        + "\x1b[B"  # down to second event row
+        + "\x12"  # Ctrl-R refresh
+        + "q"  # back to menu
+        + "q"  # quit shell
+    )
+    run_with_keys(keys, tmp_path)
+
+
 def test_shell_merkle_root_then_quit(tmp_path):
     run_with_keys("5" + "x" + "q", tmp_path)
 
@@ -127,6 +153,57 @@ def test_shell_add_evidence_folder_mirrors_all_members(tmp_path):
         store.close()
     assert "BATCH1/a.txt" in stored_ids
     assert "BATCH1/b.txt" in stored_ids
+
+
+def test_shell_log_event_no_keys_cancels_cleanly(tmp_path):
+    """Log custody event still gates on ensure_keys first, same as before
+    Task 18 -- Ctrl-C at the key-path prompt cancels without crashing or
+    reaching the (now multi-select) evidence picker."""
+    run_with_keys("3" + "\x03" + "q", tmp_path)
+    assert not (tmp_path / "custody_log.json").exists()
+
+
+def test_shell_log_event_multi_select_with_keys_present(tmp_path):
+    import sys as _sys
+
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+    from vcoc.ecdsa_signer import generate_keypair, save_keypair
+
+    signing_key, _ = generate_keypair()
+    save_keypair(signing_key, tmp_path / "private_key.pem", tmp_path / "public_key.pem")
+
+    ev1 = tmp_path / "a.txt"
+    ev1.write_text("aaa", encoding="utf-8")
+    ev2 = tmp_path / "b.txt"
+    ev2.write_text("bbb", encoding="utf-8")
+
+    keys = (
+        "1" + "n" + str(ev1) + "\r" + "EV001\r" + "x"
+        + "1" + str(ev2) + "\r" + "EV002\r" + "x"
+        + "3"  # Log custody event
+        + "\r"  # ensure_keys: accept default private_key.pem path (exists on disk)
+        + "\r"  # ensure_keys: accept default public_key.pem path (exists on disk)
+        + " "  # toggle EV001 (row 0, already highlighted)
+        + "\x1b[B"  # down to EV002
+        + " "  # toggle EV002
+        + "\r"  # confirm multi-select
+        + "J. Doe\r"  # actor
+        + "seized\r"  # action
+        + "\r"  # case number: blank, accept
+        + "\r"  # tag: blank, accept
+        + "\r"  # notes: blank, accept
+        + "x"  # dismiss output
+        + "q"
+    )
+    run_with_keys(keys, tmp_path)
+
+    import json
+
+    log_path = tmp_path / "custody_log.json"
+    assert log_path.exists()
+    entries = json.loads(log_path.read_text(encoding="utf-8"))
+    assert len(entries) == 1
+    assert entries[0]["evidence_ids"] == ["EV001", "EV002"]
 
 
 def test_shell_verification_screen_after_add_evidence(tmp_path):

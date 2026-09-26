@@ -52,18 +52,44 @@ This is the primary way to use the system — an arrow-key-driven menu that cove
 ```
 ┌─ Verifiable Chain-of-Custody — Interactive Shell ───────────────────┐
 │   ▸ 1  Add evidence                                                 │
-│     2  Search / browse evidence                                     │
-│     3  Check evidence integrity                                     │
-│     4  Log custody event                                            │
-│     5  Verify chain                                                 │
-│     6  Merkle root                                                  │
-│     7  Merkle proof                                                 │
-│     8  Generate keypair (init-keys)                                 │
-│     9  Quit                                                         │
+│     2  Check evidence integrity                                     │
+│     3  Log custody event                                            │
+│     4  Verify chain                                                 │
+│     5  Merkle root                                                  │
+│     6  Merkle proof                                                 │
+│     7  Generate keypair (init-keys)                                 │
+│     8  Verification (chain / evidence / merkle)                     │
+│     0  Quit                                                         │
 ├──────────────────────────────────────────────────────────────────── │
-│ ↑/↓ navigate   1-9 jump   Enter select   Esc/q quit                 │
+│ ↑/↓ navigate   1-8,0 jump   Enter select   Esc/q quit               │
 └──────────────────────────────────────────────────────────────────── ┘
 ```
+
+Evidence-scoped actions (Check evidence, Log custody event, Merkle proof) open a live
+search/filter picker instead of a blank text prompt — type a partial evidence ID or
+filename to narrow the list.
+
+**Multi-file custody events:** "Log custody event" lets you select more than one
+evidence record before confirming (Space toggles a row, Enter confirms the
+selection). Selecting two or more records logs a single custody event covering
+all of them — one signature, one hash-chain entry — and additionally prompts for
+an optional case number, tag, and notes. The equivalent one-shot command repeats
+`--evidence-id`:
+
+```bash
+python cli.py log-event --evidence-id EV001 --evidence-id EV002 \
+  --actor "J. Doe" --action seized --case-number C-001 --tag "disk+memory"
+```
+
+Existing single-evidence custody events (one `--evidence-id`, or selecting just
+one record in the shell) are unaffected — same format as before.
+
+**Verify chain**: the one-shot command (`python cli.py verify-chain`) lists
+every custody entry after the pass/fail summary — index, action, evidence
+id(s), actor, both hashes, a truncated signature, and per-entry OK/TAMPER
+status. In the shell, menu item 4 opens a dedicated sidebar+detail screen
+(one row per custody event, ↑/↓ to navigate, Ctrl-R/F5 to refresh) showing
+the same per-entry detail — not a static text dump.
 
 Everything below explains what each menu option / underlying module actually does.
 
@@ -76,7 +102,8 @@ Everything below explains what each menu option / underlying module actually doe
 - **`hash_chain.py`** — the custody log itself: an append-only, hash-linked chain of events (collected, transferred, accessed, etc.), where each entry embeds the hash of the previous one so any edit or deletion breaks the chain visibly.
 - **`ecdsa_signer.py`** — signs each custody log entry with an ECDSA private key and verifies signatures with the matching public key, so entries can't be forged or altered without invalidating the signature.
 - **`storage.py`** — optional encrypted-at-rest storage: an AES-256-GCM-encrypted SQLite database that mirrors the evidence index. Each row's primary key is bound in as authenticated associated data, so ciphertext can't be copied between rows.
-- **`models.py`** — shared data structures (evidence records, custody events) used across the library.
+- **`models.py`** — shared data structures (evidence records, custody events) used across the library. `CustodyEvent` supports two shapes: legacy single-`evidence_id` entries (unchanged, still hash/verify exactly as before) and newer multi-evidence entries (`evidence_ids` list, plus optional `case_number`/`tag`/`notes`).
+- **`visualize.py`** — pure data-shaping (no HTML) that normalizes the custody log and evidence/folder indexes into consistent chain-entry and Merkle-tree structures, shared by `cli.py`'s `verify-chain`/`merkle-root` output and the interactive Verification screen.
 - **`interactive/`** — the interactive shell implementation:
   - `menu.py` — renders the arrow-key menu shown above and dispatches to the same command functions the one-shot CLI uses.
   - `forms.py` — guided input prompts (evidence file, actor, action, etc.) with filesystem path autofill.
@@ -97,7 +124,7 @@ Everything below explains what each menu option / underlying module actually doe
 pytest
 ```
 
-80 tests cover hashing, Merkle proof correctness, hash-chain tamper detection, ECDSA sign/verify, encrypted storage, the tamper-simulation harness, and the interactive shell (menu, forms, store bridge, config, search, key-pair setup).
+154 tests cover hashing, Merkle proof correctness (including nested/folder-batch proofs), hash-chain tamper detection, ECDSA sign/verify, encrypted storage, the tamper-simulation harness, multi-evidence custody events, the provenance HTML export, and the interactive shell (menu, forms, store bridge, config, search, multi-select, key-pair setup).
 
 Full architecture, sequence diagrams, and a worked example session for the interactive shell are in
 [`Doc/CLI_Interactive_Shell_Architecture.md`](Doc/CLI_Interactive_Shell_Architecture.md).
@@ -116,7 +143,7 @@ Completed so far:
 ### Repository Layout
 
 ```
-src/vcoc/             Core library (hashing, merkle, hash_chain, ecdsa_signer, storage, models)
+src/vcoc/             Core library (hashing, merkle, hash_chain, ecdsa_signer, storage, models, visualize)
 src/vcoc/interactive/ Interactive shell (menu, forms, live search, EncryptedStore bridge)
 cli.py                CLI entry point (incl. `shell` subcommand)
 verifier.py           Standalone, independently-implemented verifier

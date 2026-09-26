@@ -36,16 +36,50 @@ def hash_hex_pair(left_hex: str, right_hex: str) -> str:
 
 
 def canonical_payload(entry: dict) -> str:
+    """Mirror ``vcoc.models.CustodyEvent.canonical_payload`` -- reimplemented
+    independently (see module docstring) rather than imported, but must stay
+    byte-for-byte identical or every existing signature would stop verifying.
+
+    Branches on ``evidence_ids`` the same way the model does: legacy entries
+    (single ``evidence_id``) keep hashing to their already-signed payload;
+    new-shape entries (``evidence_ids`` list) fold in case_number/tag/notes.
+    """
+    evidence_ids = entry.get("evidence_ids")
+    if evidence_ids is None:
+        return "|".join(
+            [
+                str(entry["index"]),
+                entry["evidence_id"],
+                entry["actor"],
+                entry["action"],
+                entry["timestamp"],
+                entry["prev_hash"],
+            ]
+        )
     return "|".join(
         [
             str(entry["index"]),
-            entry["evidence_id"],
+            ",".join(evidence_ids),
             entry["actor"],
             entry["action"],
             entry["timestamp"],
             entry["prev_hash"],
+            entry.get("case_number") or "",
+            entry.get("tag") or "",
+            entry.get("notes") or "",
         ]
     )
+
+
+def _verify_entry_signature(entry: dict, verifying_key: VerifyingKey) -> bool:
+    try:
+        return verifying_key.verify(
+            bytes.fromhex(entry["signature"]),
+            entry["entry_hash"].encode("utf-8"),
+            sigdecode=sigdecode_string,
+        )
+    except (BadSignatureError, ValueError):
+        return False
 
 
 def verify_chain(entries: list[dict], verifying_key: VerifyingKey) -> tuple[bool, int | None, str]:
@@ -58,20 +92,54 @@ def verify_chain(entries: list[dict], verifying_key: VerifyingKey) -> tuple[bool
         if recomputed_hash != entry["entry_hash"]:
             return False, entry["index"], "entry_hash does not match recomputed payload hash"
 
-        try:
-            ok = verifying_key.verify(
-                bytes.fromhex(entry["signature"]),
-                entry["entry_hash"].encode("utf-8"),
-                sigdecode=sigdecode_string,
-            )
-        except (BadSignatureError, ValueError):
-            ok = False
-        if not ok:
+        if not _verify_entry_signature(entry, verifying_key):
             return False, entry["index"], "signature verification failed"
 
         expected_prev = entry["entry_hash"]
 
     return True, None, "chain verified"
+
+
+@dataclass(frozen=True)
+class EntryVerification:
+    """Per-entry verification result -- mirrors vcoc.hash_chain.EntryVerification."""
+
+    index: int
+    ok: bool
+    reason: str
+
+
+def verify_each(entries: list[dict], verifying_key: VerifyingKey) -> list[EntryVerification]:
+    """Independently verify every entry without stopping at the first break --
+    mirrors ``HashChain.verify_each`` (see its docstring for why downstream
+    entries are also reported not-ok once an upstream one fails).
+    """
+    results: list[EntryVerification] = []
+    expected_prev = GENESIS_HASH
+    upstream_broken = False
+    for entry in entries:
+        reasons = []
+        if entry["prev_hash"] != expected_prev:
+            reasons.append("prev_hash does not match preceding entry")
+
+        recomputed_hash = sha256_hex(canonical_payload(entry).encode("utf-8"))
+        if recomputed_hash != entry["entry_hash"]:
+            reasons.append("entry_hash does not match recomputed payload hash")
+
+        if not _verify_entry_signature(entry, verifying_key):
+            reasons.append("signature verification failed")
+
+        if upstream_broken:
+            reasons.append("upstream entry failed verification")
+
+        ok = not reasons
+        results.append(EntryVerification(index=entry["index"], ok=ok, reason="; ".join(reasons) or "ok"))
+
+        if not ok:
+            upstream_broken = True
+        expected_prev = entry["entry_hash"]
+
+    return results
 
 
 def verify_merkle_proof(leaf: str, proof: list[dict], root: str) -> bool:
@@ -153,7 +221,12 @@ def verify_evidence_index(
     Returns (per-evidence results, recomputed root or None if index empty).
     """
     folder_index = folder_index or {}
-    logged_ids = {entry["evidence_id"] for entry in custody_entries}
+    logged_ids = set()
+    for entry in custody_entries:
+        if entry.get("evidence_ids") is not None:
+            logged_ids.update(entry["evidence_ids"])
+        else:
+            logged_ids.add(entry["evidence_id"])
 
     results = []
     for evidence_id, rec in sorted(index.items()):

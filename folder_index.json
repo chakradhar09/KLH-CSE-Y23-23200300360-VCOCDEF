@@ -11,5 +11,18 @@
       "EV005/network/c2_beacon_summary.txt",
       "EV005/network/dns_queries.txt"
     ]
+  },
+  "EV006": {
+    "root": "0f94090bddb7a63e46200e8dcba5020871bc7f75e0efa4abc4f12071bfbead99",
+    "member_ids": [
+      "EV006/disk_image/system32/drivers_etc_hosts.txt",
+      "EV006/disk_image/system32/event_log_security.txt",
+      "EV006/disk_image/users/jdoe/documents/budget_2026.txt",
+      "EV006/disk_image/users/jdoe/documents/ransom_note.txt",
+      "EV006/memory/loaded_modules_suspect.txt",
+      "EV006/memory/process_list.txt",
+      "EV006/network/c2_beacon_summary.txt",
+      "EV006/network/dns_queries.txt"
+    ]
   }
 }

@@ -83,3 +83,39 @@ def test_merkle_proof_for_solo_file_still_verifies_degenerate(tmp_path, monkeypa
     proof = nested_proof_from_dict(output["proof"])
     assert proof.folder_proof == []
     assert verify_nested_proof(output["leaf"], proof, output["root"])
+
+
+def test_merkle_root_lists_every_leaf_with_hash_and_folder_count(tmp_path, monkeypatch, capsys):
+    """Task 25: merkle-root shows more than just the final root -- every
+    grouped leaf (solo file or folder batch) with its own hash, and file
+    counts for folders."""
+    monkeypatch.chdir(tmp_path)
+    _register_folder(tmp_path, "BATCH1", {"a.txt": b"a", "b.txt": b"b", "c.txt": b"c"})
+    (tmp_path / "solo.bin").write_bytes(b"solo")
+    cli_module.cmd_add_evidence(_ns(file=str(tmp_path / "solo.bin"), evidence_id="SOLO1"))
+
+    folder_index = json.loads(Path(cli_module.DEFAULT_FOLDER_INDEX).read_text(encoding="utf-8"))
+    evidence_index = cli_module._load_evidence_index(cli_module.DEFAULT_EVIDENCE_INDEX)
+
+    capsys.readouterr()
+    cli_module.cmd_merkle_root(_ns())
+    out = capsys.readouterr().out
+
+    assert "BATCH1" in out
+    assert folder_index["BATCH1"]["root"] in out
+    assert "3 file" in out  # folder file count shown
+    assert "SOLO1" in out
+    assert evidence_index["SOLO1"]["sha256"] in out
+
+
+def test_merkle_root_empty_index_unchanged(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    capsys.readouterr()
+    try:
+        cli_module.cmd_merkle_root(_ns())
+    except SystemExit as exc:
+        assert exc.code == 1
+    else:
+        raise AssertionError("expected SystemExit(1) for empty evidence index")
+    out = capsys.readouterr().out
+    assert "No evidence registered yet." in out

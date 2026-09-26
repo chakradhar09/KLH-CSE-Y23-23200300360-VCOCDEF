@@ -25,6 +25,7 @@ from vcoc.hash_chain import HashChain, utc_now_iso
 from vcoc.hashing import hash_file
 from vcoc.merkle import MerkleTree, build_nested_proof, nested_proof_to_dict, proof_to_dict
 from vcoc.models import Evidence
+from vcoc.visualize import build_chain_view, build_tree_view, format_entry_detail_lines
 
 DEFAULT_LOG = "custody_log.json"
 DEFAULT_EVIDENCE_INDEX = "evidence_index.json"
@@ -167,14 +168,28 @@ def _add_evidence_folder(args: argparse.Namespace) -> None:
 def cmd_log_event(args: argparse.Namespace) -> None:
     signing_key = load_signing_key(args.private_key)
     chain = HashChain.load(args.log) if Path(args.log).exists() else HashChain()
-    entry = chain.add_event(
-        evidence_id=args.evidence_id,
-        actor=args.actor,
-        action=args.action,
-        signing_key=signing_key,
-    )
+    evidence_ids = args.evidence_id
+    if len(evidence_ids) == 1:
+        entry = chain.add_event(
+            evidence_id=evidence_ids[0],
+            actor=args.actor,
+            action=args.action,
+            signing_key=signing_key,
+        )
+        described = entry.evidence_id
+    else:
+        entry = chain.add_event(
+            evidence_ids=evidence_ids,
+            actor=args.actor,
+            action=args.action,
+            signing_key=signing_key,
+            case_number=getattr(args, "case_number", None),
+            tag=getattr(args, "tag", None),
+            notes=getattr(args, "notes", None),
+        )
+        described = ",".join(entry.evidence_ids)
     chain.save(args.log)
-    print(f"Logged event #{entry.index}: {entry.action} on {entry.evidence_id} by {entry.actor}")
+    print(f"Logged event #{entry.index}: {entry.action} on {described} by {entry.actor}")
     print(f"entry_hash={entry.entry_hash}")
 
 
@@ -213,6 +228,17 @@ def cmd_verify_chain(args: argparse.Namespace) -> None:
         print(f"OK: chain of {len(chain.entries)} entries verified ({reason}).")
     else:
         print(f"TAMPER DETECTED at entry #{break_index}: {reason}")
+
+    if chain.entries:
+        chain_view = build_chain_view([e.to_dict() for e in chain.entries])
+        per_entry = chain.verify_each(verifying_key)
+        print()
+        for entry, verification in zip(chain_view, per_entry):
+            for line in format_entry_detail_lines(entry, verification=verification):
+                print(f"  {line}")
+            print()
+
+    if not ok:
         sys.exit(1)
 
 
@@ -241,6 +267,14 @@ def cmd_merkle_root(args: argparse.Namespace) -> None:
     folder_index = _load_folder_index(args.folder_index)
     tree, grouped_ids = _build_main_tree(index, folder_index)
     print(f"Merkle root over {len(grouped_ids)} evidence file(s)/folder(s): {tree.root}")
+
+    print()
+    tree_view = build_tree_view(index, folder_index)
+    for node in tree_view["nodes"]:
+        if node["children"]:
+            print(f"  {node['id']}  {node['root']}  ({len(node['children'])} files)")
+        else:
+            print(f"  {node['id']}  {node['sha256']}")
 
 
 def cmd_merkle_proof(args: argparse.Namespace) -> None:
@@ -309,11 +343,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_add_evidence)
 
     p = sub.add_parser("log-event", help="Append a custody event")
-    p.add_argument("--evidence-id", required=True)
+    p.add_argument(
+        "--evidence-id",
+        required=True,
+        action="append",
+        help="Repeatable: one custody event can cover multiple evidence ids",
+    )
     p.add_argument("--actor", required=True)
     p.add_argument("--action", required=True)
     p.add_argument("--log", default=DEFAULT_LOG)
     p.add_argument("--private-key", default=DEFAULT_PRIVATE_KEY)
+    p.add_argument("--case-number", default=None, help="Multi-evidence events only")
+    p.add_argument("--tag", default=None, help="Multi-evidence events only")
+    p.add_argument("--notes", default=None, help="Multi-evidence events only")
     p.set_defaults(func=cmd_log_event)
 
     p = sub.add_parser("check-evidence", help="Check a file against its recorded evidence hash")
