@@ -1,7 +1,3 @@
-"""Shell config file (persisted key paths across sessions).
-
-Plain JSON dict, no schema -- same weight class as evidence_index.json.
-"""
 
 from __future__ import annotations
 

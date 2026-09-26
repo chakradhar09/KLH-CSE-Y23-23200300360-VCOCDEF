@@ -1,4 +1,3 @@
-"""Main menu dispatch table -- collects inputs, calls the existing cmd_* functions."""
 
 from __future__ import annotations
 
@@ -29,25 +28,18 @@ MENU_ITEMS = [
 
 
 def _run_cmd(func, namespace: argparse.Namespace) -> str:
-    """Call an existing cmd_* function, capturing stdout, sys.exit(), and errors.
-
-    cmd_* functions were written for a one-shot process that's fine to crash;
-    the shell is a long-running session that must survive one bad action
-    (e.g. verify-chain on a missing log file) and return to the menu.
-    """
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
             func(namespace)
     except SystemExit:
         pass
-    except Exception as exc:  # noqa: BLE001 -- surfaced to the user, shell must not crash
+    except Exception as exc:
         print(f"Error: {exc}", file=buf)
     return buf.getvalue().strip()
 
 
 def _defaults() -> argparse.Namespace:
-    """A namespace pre-filled with build_parser()'s own defaults."""
     return argparse.Namespace(
         evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
         folder_index=cli_module.DEFAULT_FOLDER_INDEX,
@@ -63,12 +55,6 @@ def _pick_evidence_id(store: EncryptedStore | None) -> str | None:
 
 
 def ensure_keys(shell_config: dict, config_path: str = config_module.DEFAULT_CONFIG_PATH) -> bool:
-    """Confirm private/public key paths exist, prompting + persisting if not.
-
-    Re-checks Path.exists() on every call rather than trusting a cached
-    config entry, so a key deleted between sessions re-prompts instead of
-    silently failing later. Returns False if the user cancels.
-    """
     private_key = shell_config.get("private_key")
     public_key = shell_config.get("public_key")
     if private_key and public_key and Path(private_key).exists() and Path(public_key).exists():
@@ -254,5 +240,5 @@ ACTIONS = [
     action_merkle_proof,
     action_init_keys,
     action_verification,
-    None,  # Quit -- handled by app.py
+    None,
 ]

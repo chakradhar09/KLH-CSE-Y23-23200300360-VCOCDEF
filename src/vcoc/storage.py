@@ -1,16 +1,3 @@
-"""SQLite storage backend with AES-256-GCM encryption at rest.
-
-Rows are stored as opaque ciphertext blobs (nonce || ciphertext || tag);
-the schema/column names are the only plaintext SQLite sees. AES-GCM is
-chosen over AES-CBC because it is authenticated: a tampered blob fails to
-decrypt rather than silently returning corrupted plaintext, which matters
-for a system whose entire premise is tamper detection.
-
-SQLite (rather than a client/server DBMS) is chosen because this tool is
-explicitly single-custodian, single-process — there is no concurrent
-multi-writer access to coordinate, so the operational overhead of running
-a separate database server buys nothing.
-"""
 
 from __future__ import annotations
 
@@ -23,12 +10,11 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .models import CustodyEvent, Evidence
 
-NONCE_SIZE = 12  # bytes; standard for AES-GCM
-KEY_SIZE = 32  # bytes; AES-256
+NONCE_SIZE = 12
+KEY_SIZE = 32
 
 
 def generate_key() -> bytes:
-    """Generate a random 256-bit AES key."""
     return os.urandom(KEY_SIZE)
 
 
@@ -44,14 +30,12 @@ def load_key(path: str | Path) -> bytes:
 
 
 def encrypt(key: bytes, plaintext: bytes, associated_data: bytes | None = None) -> bytes:
-    """Encrypt ``plaintext`` and return nonce || ciphertext (tag included)."""
     nonce = os.urandom(NONCE_SIZE)
     ciphertext = AESGCM(key).encrypt(nonce, plaintext, associated_data)
     return nonce + ciphertext
 
 
 def decrypt(key: bytes, blob: bytes, associated_data: bytes | None = None) -> bytes:
-    """Decrypt a nonce||ciphertext blob produced by :func:`encrypt`."""
     nonce, ciphertext = blob[:NONCE_SIZE], blob[NONCE_SIZE:]
     return AESGCM(key).decrypt(nonce, ciphertext, associated_data)
 
@@ -70,12 +54,6 @@ CREATE TABLE IF NOT EXISTS custody_events (
 
 
 class EncryptedStore:
-    """SQLite-backed store where every row value is AES-GCM ciphertext.
-
-    Each row's primary key is used as associated authenticated data (AAD),
-    so a ciphertext blob copied to a different row/key fails to decrypt --
-    this stops row-swapping tamper attempts, not just per-field corruption.
-    """
 
     def __init__(self, db_path: str | Path, key: bytes):
         self.db_path = str(db_path)
@@ -93,7 +71,6 @@ class EncryptedStore:
     def __exit__(self, *exc_info) -> None:
         self.close()
 
-    # -- Evidence -----------------------------------------------------
 
     def put_evidence(self, evidence: Evidence) -> None:
         aad = evidence.evidence_id.encode("utf-8")
@@ -122,7 +99,6 @@ class EncryptedStore:
             result.append(Evidence(**json.loads(plaintext)))
         return result
 
-    # -- Custody events -------------------------------------------------
 
     def put_event(self, event: CustodyEvent) -> None:
         aad = str(event.index).encode("utf-8")

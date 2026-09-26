@@ -1,20 +1,4 @@
 #!/usr/bin/env python3
-"""Performance/scale experiment: hashing + Merkle tree build/verify time
-vs. number of evidence files.
-
-For each evidence-set size N in --sizes, this script:
-  1. Generates N synthetic evidence files of --file-size-kb each.
-  2. Hashes all N files (SHA-256) and times it.
-  3. Builds a Merkle tree over the N digests and times it.
-  4. Generates and verifies an inclusion proof for one leaf and times it.
-
-This is the experiment behind the "performance/scale" result in the paper
-(PRC-2 Plan, Section 4, item 3).
-
-Usage:
-    python scripts/performance_scale.py [--sizes 10 100 1000] [--out results.json] [--chart chart.png]
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -35,11 +19,6 @@ DEFAULT_FILE_SIZE_KB = 64
 
 
 def generate_synthetic_files(directory: Path, count: int, file_size_kb: int) -> list[Path]:
-    """Create `count` synthetic evidence files of `file_size_kb` KB each.
-
-    Content is pseudo-random per file (not all-zero) so files don't hash
-    identically, mirroring the entropy real evidence artifacts would have.
-    """
     paths = []
     for i in range(count):
         path = directory / f"synthetic_evidence_{i:06d}.bin"

@@ -1,8 +1,3 @@
-"""Small full-screen text-input prompts (file path, actor, action, key paths).
-
-Each function blocks until the user hits Enter (returns the typed string) or
-Escape (returns None).
-"""
 
 from __future__ import annotations
 
@@ -56,7 +51,6 @@ def prompt_text(title: str, label: str, default: str = "") -> str | None:
 
 
 def _glob_matches(text: str, dirs_only: bool) -> list[Path]:
-    """List filesystem entries matching the partial last path segment of text."""
     if not text:
         parent, fragment = Path("."), ""
     elif text.endswith(("/", "\\")):
@@ -76,23 +70,10 @@ def _glob_matches(text: str, dirs_only: bool) -> list[Path]:
 
 
 def prompt_path(title: str, label: str, default: str = "", dirs_only: bool = False) -> str | None:
-    """Text prompt with live filesystem autofill.
-
-    Typing filters a results pane (sibling files/dirs matching the partial
-    last path segment). Tab/Down moves into the results; Enter on a
-    highlighted directory descends into it (keeps editing); Enter on a
-    highlighted file returns its full path; Enter with nothing highlighted
-    submits the typed text as-is -- manual/absolute paths always work even
-    with no filesystem match.
-    # ponytail: glob-per-keystroke against the literal parent dir, same
-    # approach as store_bridge's in-memory filter -- no fuzzy matching, no
-    # recursive walk; add fuzzy ranking only if flat prefix listing proves
-    # annoying in practice.
-    """
     buf = Buffer(multiline=False)
     buf.text = default
     matches: list[Path] = _glob_matches(default, dirs_only)
-    selected = [-1]  # -1 = no result highlighted (typed text wins on Enter)
+    selected = [-1]
 
     def refresh(_=None):
         nonlocal matches
@@ -189,18 +170,10 @@ def confirm(question: str) -> bool:
 
 
 def show_output(title: str, text: str) -> None:
-    # scroll_one_line_down/up and scroll_page_down/up move event.app.current_buffer's
-    # cursor -- they need a real Buffer/BufferControl (with a document + cursor) to
-    # scroll at all. A bare FormattedTextControl has neither, so those bindings were
-    # silent no-ops: nothing scrolled, and stdout longer than the window (e.g. a
-    # Merkle proof) was unreachable below the fold.
     buf = Buffer(document=Document(text, 0), read_only=True)
 
     kb = KeyBindings()
 
-    # Scroll keys are registered as exact bindings so they take priority over
-    # the "<any>" catch-all below; every other key still dismisses the screen
-    # (existing behavior long menu items rely on, e.g. "x" to dismiss).
     kb.add("down")(scroll_one_line_down)
     kb.add("up")(scroll_one_line_up)
     kb.add("pagedown")(scroll_page_down)

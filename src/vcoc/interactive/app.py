@@ -1,11 +1,3 @@
-"""Main menu: key bindings, screen switching, store lifecycle.
-
-Screens run as a sequence of independent, top-level Application.run() calls
--- never nested (nesting an Application.run() inside another running
-Application's key handler deadlocks prompt_toolkit's asyncio event loop).
-Each menu selection exits the menu Application with a result, the action
-runs to completion, then the next loop iteration draws a fresh menu.
-"""
 
 from __future__ import annotations
 
@@ -36,7 +28,6 @@ def _render_menu(selected: int) -> str:
 
 
 def _run_main_menu() -> int:
-    """Run the menu screen once; return the chosen index (or QUIT_INDEX)."""
     selected = [0]
     kb = KeyBindings()
 
@@ -57,7 +48,7 @@ def _run_main_menu() -> int:
     def _(event):
         event.app.exit(result=QUIT_INDEX)
 
-    for digit in "1234567890":  # "0" maps to the 10th item
+    for digit in "1234567890":
 
         def make_handler(d=digit):
             def handler(event):
@@ -80,7 +71,6 @@ def _run_main_menu() -> int:
 
 
 def _get_store() -> EncryptedStore | None:
-    """Ask the user once whether to open/create the encrypted store mirror."""
     key_path, db_path = store_bridge.DEFAULT_KEY_PATH, store_bridge.DEFAULT_DB_PATH
     if not Path(key_path).exists():
         if not forms.confirm(f"No encrypted store key found. Generate one now at {key_path}?"):
@@ -99,7 +89,7 @@ def run_shell() -> None:
             index = _run_main_menu()
             if index == QUIT_INDEX:
                 break
-            if index == 0 and not store_prompted:  # Add evidence: first-use store prompt
+            if index == 0 and not store_prompted:
                 store_prompted = True
                 store = _get_store()
             menu.ACTIONS[index](store, shell_config)

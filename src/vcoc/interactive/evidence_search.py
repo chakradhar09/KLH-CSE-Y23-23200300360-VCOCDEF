@@ -1,4 +1,3 @@
-"""Live search-as-you-type screen over evidence_index.json + EncryptedStore."""
 
 from __future__ import annotations
 
@@ -41,12 +40,6 @@ def _format_result_multi(entry: dict, selected: bool, checked: bool) -> str:
 
 
 def search_evidence_multi(index: dict, store: EncryptedStore | None) -> list[str] | None:
-    """Same live-filter screen as search_evidence, but Space toggles the
-    highlighted row into an accumulating selection set. Enter submits the
-    accumulated set -- or, if nothing was toggled, just the highlighted row
-    (parity with search_evidence's one-keypress single-select UX). Escape
-    cancels (returns None).
-    """
     query_buf = Buffer(multiline=False)
     results: list[dict] = store_bridge.search(index, store, "")
     selected = [0]
@@ -130,7 +123,6 @@ def search_evidence_multi(index: dict, store: EncryptedStore | None) -> list[str
 
 
 def search_evidence(index: dict, store: EncryptedStore | None) -> str | None:
-    """Run the live search screen; return the selected evidence_id, or None."""
     query_buf = Buffer(multiline=False)
     results: list[dict] = store_bridge.search(index, store, "")
     selected = [0]

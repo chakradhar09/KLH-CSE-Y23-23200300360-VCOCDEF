@@ -1,8 +1,3 @@
-"""EncryptedStore key acquisition, dual-write mirror, and cross-store search.
-
-No prompt_toolkit dependency -- everything here is a plain function, testable
-without a terminal.
-"""
 
 from __future__ import annotations
 
@@ -18,12 +13,6 @@ DEFAULT_DB_PATH = "evidence_store.db"
 def open_or_create_store(
     key_path: str = DEFAULT_KEY_PATH, db_path: str = DEFAULT_DB_PATH
 ) -> tuple[EncryptedStore | None, str]:
-    """Open the encrypted store, creating a key if none exists yet.
-
-    Returns (store, message). store is None if the caller should be asked
-    for confirmation first (see confirm_and_open below) -- this function
-    itself never prompts.
-    """
     key_existed = Path(key_path).exists()
     if key_existed:
         key = load_key(key_path)
@@ -36,30 +25,14 @@ def open_or_create_store(
 
 
 def mirror_to_store(store: EncryptedStore, evidence: Evidence) -> str | None:
-    """Mirror an evidence record into the encrypted store.
-
-    Never raises -- returns an error message string on failure (non-fatal,
-    one-directional: the JSON index write already happened and is never
-    rolled back), or None on success.
-    # ponytail: dual-write can desync if the mirror step fails; add an
-    # explicit "reconcile" action later if that happens often in practice --
-    # not needed for a single-custodian tool where the operator can just
-    # re-run add-evidence.
-    """
     try:
         store.put_evidence(evidence)
         return None
-    except Exception as exc:  # noqa: BLE001 -- surfaced to the user, not swallowed
+    except Exception as exc:
         return f"mirror failed: {exc}"
 
 
 def search(index: dict, store: EncryptedStore | None, query: str) -> list[dict]:
-    """Merge evidence_index.json + EncryptedStore records, tag, and filter.
-
-    Each result dict: evidence_id, original_filename, index_sha256 (or None),
-    store_sha256 (or None), tag (one of "mirrored", "index-only",
-    "store-only", "DIVERGED").
-    """
     merged: dict[str, dict] = {}
     for eid, rec in index.items():
         merged[eid] = {

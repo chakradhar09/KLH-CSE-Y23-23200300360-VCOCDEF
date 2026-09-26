@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""CLI for the Verifiable Chain-of-Custody tool.
-
-Commands:
-    init-keys        Generate an ECDSA keypair for signing custody events.
-    add-evidence      Hash a file, register it as evidence, add it as a Merkle leaf.
-    check-evidence    Rehash a file and compare it against its recorded evidence hash.
-    log-event        Append a signed custody event to the hash chain.
-    verify-chain      Recompute and verify the entire hash chain + signatures.
-    merkle-root       Print the current Merkle root over registered evidence.
-    merkle-proof      Generate an inclusion proof for one evidence file.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -243,12 +231,6 @@ def cmd_verify_chain(args: argparse.Namespace) -> None:
 
 
 def _build_main_tree(evidence_index: dict, folder_index: dict) -> tuple[MerkleTree, list[str]]:
-    """Group evidence_index records by folder_id (or their own id if solo),
-    substituting each folder's precomputed subtree root for its leaf.
-
-    Returns (main_tree, ordered_group_ids) where ordered_group_ids[i] is the
-    evidence_id or folder_id backing main_tree's leaf at index i.
-    """
     grouped_ids = sorted({rec.get("folder_id") or eid for eid, rec in evidence_index.items()})
     leaves = []
     for gid in grouped_ids:
