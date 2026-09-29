@@ -1,10 +1,3 @@
-"""SQLite persistence for the custody log, evidence records, and folder batches.
-
-Everything is stored as plain columns: hashes, signatures and timestamps are
-not secret, and the hash chain must stay independently verifiable (see the
-``export`` CLI command, which regenerates the JSON files ``verifier.py`` reads).
-"""
-
 from __future__ import annotations
 
 import json
@@ -136,7 +129,6 @@ def load_evidence_index(conn: sqlite3.Connection) -> dict:
 def put_folder(
     conn: sqlite3.Connection, folder_id: str, root: str, member_ids: list[str], members: list[Evidence] = ()
 ) -> None:
-    """Record a folder batch; ``members`` are written in the same transaction."""
     with conn:
         conn.executemany(_EVIDENCE_SQL, [_evidence_row(m) for m in members])
         conn.execute(

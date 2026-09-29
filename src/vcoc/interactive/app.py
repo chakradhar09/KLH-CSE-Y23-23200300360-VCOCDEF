@@ -1,11 +1,3 @@
-"""Main menu: key bindings and screen switching.
-
-Screens run as a sequence of independent, top-level Application.run() calls
--- never nested (nesting an Application.run() inside another running
-Application's key handler deadlocks prompt_toolkit's asyncio event loop).
-Each menu selection exits the menu Application with a result, the action
-runs to completion, then the next loop iteration draws a fresh menu.
-"""
 
 from __future__ import annotations
 
@@ -32,7 +24,6 @@ def _render_menu(selected: int) -> str:
 
 
 def _run_main_menu() -> int:
-    """Run the menu screen once; return the chosen index (or QUIT_INDEX)."""
     selected = [0]
     kb = KeyBindings()
 
@@ -53,7 +44,7 @@ def _run_main_menu() -> int:
     def _(event):
         event.app.exit(result=QUIT_INDEX)
 
-    for digit in "1234567890":  # "0" maps to the 10th item
+    for digit in "1234567890":
 
         def make_handler(d=digit):
             def handler(event):

@@ -1,9 +1,3 @@
-"""Merkle tree construction and inclusion-proof generation/verification.
-
-Odd levels are handled by duplicating the last node (Bitcoin-style), which
-keeps the implementation simple and deterministic. Leaves are pre-hashed
-(hex-encoded SHA-256 digests) by the caller (see ``hashing.hash_file``).
-"""
 
 from __future__ import annotations
 
@@ -14,14 +8,12 @@ from .hashing import hash_hex_pair
 
 @dataclass(frozen=True)
 class ProofStep:
-    """One step of a Merkle inclusion proof: a sibling hash and its side."""
 
     sibling: str
-    is_left: bool  # True if the sibling belongs on the left of the pair
+    is_left: bool
 
 
 class MerkleTree:
-    """A Merkle tree over an ordered list of leaf hashes."""
 
     def __init__(self, leaves: list[str]):
         if not leaves:
@@ -48,7 +40,6 @@ class MerkleTree:
         return self.levels[-1][0]
 
     def get_proof(self, leaf_index: int) -> list[ProofStep]:
-        """Build an inclusion proof for the leaf at ``leaf_index``."""
         if not (0 <= leaf_index < len(self.leaves)):
             raise IndexError(f"leaf_index {leaf_index} out of range")
 
@@ -58,7 +49,7 @@ class MerkleTree:
             is_right_node = index % 2 == 1
             sibling_index = index - 1 if is_right_node else index + 1
             if sibling_index >= len(level):
-                sibling_index = index  # odd level: duplicated last node
+                sibling_index = index
             sibling = level[sibling_index]
             proof.append(ProofStep(sibling=sibling, is_left=is_right_node))
             index //= 2
@@ -66,7 +57,6 @@ class MerkleTree:
 
 
 def verify_proof(leaf: str, proof: list[ProofStep], root: str) -> bool:
-    """Recompute the root from ``leaf`` and ``proof`` and compare to ``root``."""
     computed = leaf
     for step in proof:
         if step.is_left:
@@ -86,12 +76,6 @@ def proof_from_dict(data: list[dict]) -> list[ProofStep]:
 
 @dataclass(frozen=True)
 class NestedProof:
-    """A two-hop inclusion proof: file leaf -> subtree root -> main root.
-
-    For evidence that isn't part of a folder batch, ``subtree_root`` equals
-    the main root and ``folder_proof`` is empty -- the single-tree case is a
-    literal degenerate nested proof, not a separate format.
-    """
 
     local_proof: list[ProofStep]
     subtree_root: str
@@ -104,11 +88,6 @@ def build_nested_proof(
     folder_tree: MerkleTree | None,
     folder_index: int | None,
 ) -> NestedProof:
-    """Build a proof for ``local_tree``'s leaf, optionally nested under ``folder_tree``.
-
-    Pass ``folder_tree=None`` when the leaf isn't part of a folder batch --
-    ``local_tree`` is then the main tree itself.
-    """
     local_proof = local_tree.get_proof(local_index)
     if folder_tree is None:
         return NestedProof(local_proof=local_proof, subtree_root=local_tree.root, folder_proof=[])
@@ -117,7 +96,6 @@ def build_nested_proof(
 
 
 def verify_nested_proof(leaf: str, proof: NestedProof, root: str) -> bool:
-    """Recompute both hops from ``leaf`` and ``proof`` and compare to ``root``."""
     if not verify_proof(leaf, proof.local_proof, proof.subtree_root):
         return False
     if not proof.folder_proof:

@@ -1,24 +1,4 @@
 #!/usr/bin/env python3
-"""Storage-overhead experiment: plaintext vs. AES-256-GCM-at-rest size.
-
-For each record count N in --sizes, this script:
-  1. Builds N synthetic Evidence records and N synthetic CustodyEvent
-     records (via a real HashChain, so entries are genuinely hash-linked
-     and signed).
-  2. Serializes them as plain JSON (the "plaintext" baseline) and measures
-     the byte size.
-  3. Writes them into an EncryptedStore (SQLite + AES-256-GCM) and measures
-     the resulting .db file size.
-  4. Reports absolute and per-record overhead.
-
-This is the experiment behind the "storage overhead" result in the paper
-(PRC-2 Plan, Section 4, item 4), scoped to the SQLite + AES-GCM extension
-selected for this cycle.
-
-Usage:
-    python scripts/storage_overhead.py [--sizes 10 100 1000] [--out results.json] [--chart chart.png]
-"""
-
 from __future__ import annotations
 
 import argparse

@@ -1,8 +1,3 @@
-"""Verification screen: top tab bar (Chain / Evidence / Merkle) + sidebar of
-results + detail pane. Calls the standalone verifier.py functions directly
--- same independent, from-scratch checks an outside auditor would run via
-`python verifier.py`, just rendered in the shell instead of printed.
-"""
 
 from __future__ import annotations
 
@@ -50,20 +45,6 @@ def _load_folders() -> dict:
 
 
 def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[str]]:
-    """Returns (sidebar rows, detail lines per row -- parallel lists).
-
-    One row per custody event (not one aggregate row), so the sidebar can be
-    navigated the same way the Evidence tab's one-row-per-record list
-    already is. Each row's detail pane shows the same rich per-entry info
-    verify-chain's CLI output has: both hashes, a truncated signature, and
-    an independent per-entry OK/TAMPER status.
-
-    public_key_path comes from shell_config["public_key"] when the shell
-    has one configured (via menu.ensure_keys, Task 8) -- that's the same
-    key Log custody event / Verify chain already trust, wherever the user
-    pointed it. Falls back to the cwd default for callers with no
-    shell_config (or a config that hasn't set a key yet), same as before.
-    """
     entries = _load_entries()
     if entries is None:
         return ["No custody log found"], [f"{cli_module.DEFAULT_DB} does not exist yet."]
@@ -127,9 +108,6 @@ def _run_merkle_check() -> tuple[list[str], list[list[str]]]:
         return ["No evidence registered"], [["No evidence in the database -- nothing to build a Merkle root from."]]
     folder_index = _load_folders()
 
-    # Group by folder_id (or the record's own id if solo) the same way
-    # cli.py's _build_main_tree does, so this independently recomputed root
-    # matches `merkle-root` for evidence sets containing folder batches.
     grouped_ids = sorted({rec.get("folder_id") or eid for eid, rec in index.items()})
     leaves = [
         folder_index[gid]["root"] if gid in folder_index else index[gid]["sha256"] for gid in grouped_ids
@@ -162,12 +140,6 @@ def _run_sidebar_detail_app(
     extra_keybindings: "callable[[object], None] | None" = None,
     help_text: str = " ↑/↓ select   Ctrl-R/F5 refresh   Esc/q back",
 ) -> None:
-    """Shared sidebar (list of rows) + detail pane (lines for the selected
-    row) full-screen application. `load_rows()` is called on open and on
-    every manual refresh; `top_bar`/`extra_keybindings` let a caller add a
-    tab bar and tab-switching keys on top of the same base screen, without
-    duplicating the sidebar/detail/navigation plumbing.
-    """
     selected_row = [0]
     rows: list[str] = []
     details: list[list[str]] = []
@@ -296,9 +268,4 @@ def run_verification_screen(shell_config: dict | None = None) -> None:
 
 
 def run_verify_chain_screen(shell_config: dict | None = None) -> None:
-    """Standalone 'Verify chain' screen: sidebar lists one row per custody
-    event, detail pane shows full per-entry hash/signature/status -- same
-    information the Verification screen's Chain tab shows, but as its own
-    dedicated entry point (menu item 4), not a tab inside a bigger screen.
-    """
     _run_sidebar_detail_app("Verify Chain", lambda: _run_chain_check(shell_config))

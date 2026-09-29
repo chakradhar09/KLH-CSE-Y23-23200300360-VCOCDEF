@@ -1,4 +1,3 @@
-"""Live search-as-you-type screen over the evidence table."""
 
 from __future__ import annotations
 
@@ -12,7 +11,6 @@ from prompt_toolkit.widgets import Frame
 
 
 def search(index: dict, query: str) -> list[dict]:
-    """Case-insensitive substring match on evidence_id or original_filename."""
     q = query.lower()
     results = [
         {
@@ -44,12 +42,6 @@ def _format_result_multi(entry: dict, selected: bool, checked: bool) -> str:
 
 
 def search_evidence_multi(index: dict) -> list[str] | None:
-    """Same live-filter screen as search_evidence, but Space toggles the
-    highlighted row into an accumulating selection set. Enter submits the
-    accumulated set -- or, if nothing was toggled, just the highlighted row
-    (parity with search_evidence's one-keypress single-select UX). Escape
-    cancels (returns None).
-    """
     query_buf = Buffer(multiline=False)
     results: list[dict] = search(index, "")
     selected = [0]
@@ -133,7 +125,6 @@ def search_evidence_multi(index: dict) -> list[str] | None:
 
 
 def search_evidence(index: dict) -> str | None:
-    """Run the live search screen; return the selected evidence_id, or None."""
     query_buf = Buffer(multiline=False)
     results: list[dict] = search(index, "")
     selected = [0]

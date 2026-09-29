@@ -1,17 +1,4 @@
 #!/usr/bin/env python3
-"""Standalone chain-of-custody verifier.
-
-Deliberately decoupled from ``cli.py``: it re-implements hash and signature
-recomputation from first principles (stdlib ``hashlib`` + ``ecdsa`` only,
-no import of ``vcoc.hash_chain`` or ``vcoc.merkle``), so a bug or backdoor in
-the logging tool cannot cause this verifier to falsely certify a tampered
-log as authentic. It reads only the same public artifacts an outside
-auditor would have: the JSON custody log, the public key, and (optionally)
-the evidence index and a Merkle proof file. ``evidence_index.json`` is read
-directly (not through ``vcoc``) -- it is a plain public data file, the same
-kind of artifact ``custody_log.json`` already is, not logging-tool logic.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -36,14 +23,6 @@ def hash_hex_pair(left_hex: str, right_hex: str) -> str:
 
 
 def canonical_payload(entry: dict) -> str:
-    """Mirror ``vcoc.models.CustodyEvent.canonical_payload`` -- reimplemented
-    independently (see module docstring) rather than imported, but must stay
-    byte-for-byte identical or every existing signature would stop verifying.
-
-    Branches on ``evidence_ids`` the same way the model does: legacy entries
-    (single ``evidence_id``) keep hashing to their already-signed payload;
-    new-shape entries (``evidence_ids`` list) fold in case_number/tag/notes.
-    """
     evidence_ids = entry.get("evidence_ids")
     if evidence_ids is None:
         return "|".join(
@@ -56,18 +35,19 @@ def canonical_payload(entry: dict) -> str:
                 entry["prev_hash"],
             ]
         )
-    return "|".join(
-        [
-            str(entry["index"]),
-            ",".join(evidence_ids),
-            entry["actor"],
-            entry["action"],
-            entry["timestamp"],
-            entry["prev_hash"],
-            entry.get("case_number") or "",
-            entry.get("tag") or "",
-            entry.get("notes") or "",
-        ]
+    return json.dumps(
+        {
+            "index": entry["index"],
+            "evidence_ids": evidence_ids,
+            "actor": entry["actor"],
+            "action": entry["action"],
+            "timestamp": entry["timestamp"],
+            "prev_hash": entry["prev_hash"],
+            "case_number": entry.get("case_number") or "",
+            "tag": entry.get("tag") or "",
+            "notes": entry.get("notes") or "",
+        },
+        sort_keys=True,
     )
 
 
@@ -102,7 +82,6 @@ def verify_chain(entries: list[dict], verifying_key: VerifyingKey) -> tuple[bool
 
 @dataclass(frozen=True)
 class EntryVerification:
-    """Per-entry verification result -- mirrors vcoc.hash_chain.EntryVerification."""
 
     index: int
     ok: bool
@@ -110,10 +89,6 @@ class EntryVerification:
 
 
 def verify_each(entries: list[dict], verifying_key: VerifyingKey) -> list[EntryVerification]:
-    """Independently verify every entry without stopping at the first break --
-    mirrors ``HashChain.verify_each`` (see its docstring for why downstream
-    entries are also reported not-ok once an upstream one fails).
-    """
     results: list[EntryVerification] = []
     expected_prev = GENESIS_HASH
     upstream_broken = False
@@ -153,18 +128,6 @@ def verify_merkle_proof(leaf: str, proof: list[dict], root: str) -> bool:
 
 
 def verify_nested_proof(leaf: str, proof: dict, root: str) -> bool:
-    """Recompute both hops of a nested (file -> subtree root -> main root)
-    proof, independently of ``vcoc.merkle.verify_nested_proof`` -- this
-    module re-implements every check from scratch by design (see module
-    docstring), so a bug in the logging tool's proof format can't silently
-    propagate into a false "verified" result here.
-
-    ``proof`` is the dict shape ``vcoc.merkle.nested_proof_to_dict`` produces:
-    ``{"local_proof": [...], "subtree_root": str, "folder_proof": [...]}``.
-    A record not part of a folder batch has an empty ``folder_proof`` and
-    ``subtree_root == root`` -- the single-tree case is this format's literal
-    degenerate case, not a separate one.
-    """
     if not verify_merkle_proof(leaf, proof["local_proof"], proof["subtree_root"]):
         return False
     if not proof["folder_proof"]:
@@ -173,7 +136,6 @@ def verify_nested_proof(leaf: str, proof: dict, root: str) -> bool:
 
 
 def merkle_root(leaves: list[str]) -> str:
-    """Recompute a Merkle root from ordered leaf hashes, from scratch."""
     if not leaves:
         raise ValueError("cannot compute a Merkle root over zero leaves")
     level = list(leaves)
@@ -189,14 +151,13 @@ def merkle_root(leaves: list[str]) -> str:
 
 @dataclass
 class EvidenceCheckResult:
-    """Per-evidence-record verification outcome."""
 
     evidence_id: str
     original_filename: str
     recorded_sha256: str
     source_path: str
-    rehash_status: str  # "match" | "MISMATCH" | "not found" | "no source_path recorded"
-    logged_status: str  # "logged" | "NOT LOGGED"
+    rehash_status: str
+    logged_status: str
 
     @property
     def ok(self) -> bool:
@@ -206,20 +167,6 @@ class EvidenceCheckResult:
 def verify_evidence_index(
     index: dict, custody_entries: list[dict], folder_index: dict | None = None
 ) -> tuple[list[EvidenceCheckResult], str | None]:
-    """Independently re-check every evidence record in ``evidence_index.json``.
-
-    For each record: re-hash the file at ``source_path`` if it still exists
-    on disk (a missing/moved file is reported, not treated as tamper -- the
-    file may simply have been archived elsewhere since collection), and
-    confirm at least one custody_log.json entry references the evidence_id.
-    Also recomputes the main Merkle root, grouping any folder-batch records
-    (``rec["folder_id"]`` set) under their precomputed subtree root from
-    ``folder_index`` -- the same grouping ``cli.py``'s ``_build_main_tree``
-    performs, recomputed here independently so the two can never silently
-    drift apart (folder-batch registration, evidence-index.json schema).
-
-    Returns (per-evidence results, recomputed root or None if index empty).
-    """
     folder_index = folder_index or {}
     logged_ids = set()
     for entry in custody_entries:

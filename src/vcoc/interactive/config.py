@@ -1,7 +1,3 @@
-"""Shell config file (persisted key paths across sessions).
-
-Plain JSON dict, no schema -- small UI preferences only; evidence and custody data live in vcoc.db.
-"""
 
 from __future__ import annotations
 

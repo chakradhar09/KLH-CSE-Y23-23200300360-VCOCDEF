@@ -1,11 +1,3 @@
-"""Pure data-shaping shared by verify-chain's CLI output and the interactive
-Verification screen.
-
-Takes already-loaded evidence_index/folder_index/custody_log data (no file
-I/O here -- callers load and pass in, same separation db.py keeps)
-and returns plain, normalized dict/list/text structures both display
-surfaces render from, so they never drift apart.
-"""
 
 from __future__ import annotations
 
@@ -18,10 +10,6 @@ if TYPE_CHECKING:
 
 
 def build_chain_view(entries: list[dict]) -> list[dict]:
-    """Normalize custody log entries (legacy or new-shape) into one
-    consistent per-entry shape for the chain diagram: evidence_ids is
-    always a list, case_number/tag/notes are always present (None if unset).
-    """
     view = []
     for entry in entries:
         evidence_ids = entry["evidence_ids"] if "evidence_ids" in entry else [entry["evidence_id"]]
@@ -44,12 +32,6 @@ def build_chain_view(entries: list[dict]) -> list[dict]:
 
 
 def format_entry_summaries(chain_view: list[dict]) -> list[str]:
-    """One line per normalized chain-view entry (see build_chain_view): all
-    evidence_ids it covers, plus case_number/tag/notes when present --
-    legacy single-evidence_id entries stay a single plain line, no
-    empty-field clutter. Shared by cli.py's verify-chain output and the
-    interactive shell's Verification screen, so the two never drift apart.
-    """
     lines = []
     for entry in chain_view:
         eids = ", ".join(entry["evidence_ids"])
@@ -67,12 +49,6 @@ def format_entry_summaries(chain_view: list[dict]) -> list[str]:
 
 
 def format_entry_detail_lines(entry: dict, verification: "EntryVerification | None" = None) -> list[str]:
-    """Multi-line rich detail for one chain-view entry: the summary line,
-    both hashes in full, a truncated signature, and (when a per-entry
-    HashChain.verify_each() result is supplied) an OK/TAMPER status line.
-    Shared by cli.py's verify-chain output and the interactive shell's
-    Verification screen Chain tab, so the two show identical detail.
-    """
     lines = list(format_entry_summaries([entry]))
     lines.append(f"  entry_hash: {entry['entry_hash']}")
     lines.append(f"  prev_hash:  {entry['prev_hash']}")
@@ -86,13 +62,6 @@ def format_entry_detail_lines(entry: dict, verification: "EntryVerification | No
 
 
 def build_tree_view(evidence_index: dict, folder_index: dict) -> dict:
-    """Group evidence_index records by folder_id (or their own id if solo)
-    -- the same grouping cli.py's _build_main_tree performs -- and return a
-    nested {root, nodes: [{id, root|sha256, children: [...]}]} shape. A
-    folder batch's member files nest as children under one top-level node,
-    matching the same fan-out mental model folder-batches and multi-evidence
-    custody events share.
-    """
     if not evidence_index:
         return {"root": None, "nodes": []}
 

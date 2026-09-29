@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""Tamper-simulation harness.
-
-Builds a small custody chain, verifies it is clean, then applies a series
-of deliberate single-point corruptions (one at a time, from a freshly
-rebuilt clean chain each time) and confirms the independent verifier
-(``verifier.py``) flags every one of them at the correct entry index. This
-is the experiment behind the "tamper detection" result in the paper.
-
-Usage:
-    python scripts/tamper_simulation.py [--out results.json]
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -26,8 +14,8 @@ from vcoc.ecdsa_signer import generate_keypair, save_keypair
 from vcoc.hash_chain import HashChain
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from verifier import verify_chain as independent_verify_chain  # noqa: E402
-from ecdsa import VerifyingKey  # noqa: E402
+from verifier import verify_chain as independent_verify_chain
+from ecdsa import VerifyingKey
 
 
 def build_clean_chain(signing_key, num_entries: int = 5) -> HashChain:

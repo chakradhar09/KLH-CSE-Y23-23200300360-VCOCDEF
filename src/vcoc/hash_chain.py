@@ -1,11 +1,3 @@
-"""Append-only, hash-linked, ECDSA-signed custody log.
-
-Each entry's ``entry_hash`` covers its own payload plus the previous entry's
-hash, so any change to an earlier entry (or to its position) changes every
-subsequent hash — the same tamper-evidence property a blockchain gets from
-its consensus layer, but here enforced purely by verification, since there
-is only one custodian and no distributed agreement to reach.
-"""
 
 from __future__ import annotations
 
@@ -25,7 +17,6 @@ GENESIS_HASH = "0" * 64
 
 @dataclass(frozen=True)
 class EntryVerification:
-    """Per-entry verification result -- see HashChain.verify_each()."""
 
     index: int
     ok: bool
@@ -37,11 +28,10 @@ def utc_now_iso() -> str:
 
 
 class HashChain:
-    """In-memory append-only custody log with load/save to JSON."""
 
     def __init__(self, entries: list[CustodyEvent] | None = None):
         self.entries: list[CustodyEvent] = entries or []
-        self._persisted = 0  # entries already in the DB; only meaningful with load_db/save_db
+        self._persisted = 0
 
     @property
     def last_hash(self) -> str:
@@ -59,12 +49,6 @@ class HashChain:
         notes: str | None = None,
         timestamp: str | None = None,
     ) -> CustodyEvent:
-        """Create, hash, sign, and append a new custody event.
-
-        Exactly one of ``evidence_id`` (legacy, single) or ``evidence_ids``
-        (new, one-or-more) must be given -- see CustodyEvent's docstring for
-        why the two shapes are mutually exclusive and permanent per entry.
-        """
         if (evidence_id is None) == (evidence_ids is None):
             raise ValueError("add_event requires exactly one of evidence_id or evidence_ids")
 
@@ -96,12 +80,6 @@ class HashChain:
         return entry
 
     def verify(self, verifying_key: VerifyingKey) -> tuple[bool, int | None, str]:
-        """Recompute hashes/signatures for every entry from scratch.
-
-        Returns ``(ok, break_index, reason)``. ``break_index`` is the index
-        of the first entry that fails verification, or ``None`` if the
-        whole chain is valid.
-        """
         expected_prev = GENESIS_HASH
         for entry in self.entries:
             if entry.prev_hash != expected_prev:
@@ -119,15 +97,6 @@ class HashChain:
         return True, None, "chain verified"
 
     def verify_each(self, verifying_key: VerifyingKey) -> list[EntryVerification]:
-        """Independently verify every entry, without stopping at the first
-        break -- additive to verify()'s existing (ok, break_index, reason)
-        contract, which every other caller keeps using unchanged.
-
-        An entry downstream of a broken one is also reported not-ok: once an
-        entry's own recomputed hash doesn't match what it claims, nothing
-        chaining from it can be trusted either, even if that later entry's
-        own payload/signature would otherwise check out.
-        """
         results: list[EntryVerification] = []
         expected_prev = GENESIS_HASH
         upstream_broken = False
@@ -175,7 +144,6 @@ class HashChain:
         return chain
 
     def save_db(self, conn) -> None:
-        """Append entries added since load_db(). Raises IntegrityError if the stored chain moved on."""
         from . import db
 
         db.insert_events(conn, self.entries[self._persisted :])
