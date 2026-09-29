@@ -18,7 +18,7 @@ def _ns(**kwargs) -> argparse.Namespace:
     defaults = dict(
         file=None,
         evidence_id="EV001",
-        evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
+        db=cli_module.DEFAULT_DB,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -31,9 +31,7 @@ def _register(tmp_path: Path, content: bytes = b"original content") -> Path:
         argparse.Namespace(
             file=str(f),
             evidence_id="EV001",
-            evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
-            folder_index=cli_module.DEFAULT_FOLDER_INDEX,
-            log=cli_module.DEFAULT_LOG,
+            db=cli_module.DEFAULT_DB,
             private_key=None,
             actor=None,
         )

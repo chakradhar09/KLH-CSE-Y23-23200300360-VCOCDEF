@@ -174,9 +174,7 @@ def test_verify_evidence_index_groups_folder_batch_into_single_root(tmp_path):
             argparse.Namespace(
                 file=str(folder),
                 evidence_id="BATCH1",
-                evidence_index="evidence_index.json",
-                folder_index="folder_index.json",
-                log="custody_log.json",
+                db="vcoc.db",
                 private_key=None,
                 actor=None,
             )
@@ -185,16 +183,14 @@ def test_verify_evidence_index_groups_folder_batch_into_single_root(tmp_path):
             argparse.Namespace(
                 file=str(monkey_cwd / "solo.bin"),
                 evidence_id="SOLO1",
-                evidence_index="evidence_index.json",
-                folder_index="folder_index.json",
-                log="custody_log.json",
+                db="vcoc.db",
                 private_key=None,
                 actor=None,
             )
         )
 
-        evidence_index = cli_module._load_evidence_index("evidence_index.json")
-        folder_index = cli_module._load_folder_index("folder_index.json")
+        evidence_index = cli_module._load_evidence_index("vcoc.db")
+        folder_index = cli_module._load_folder_index("vcoc.db")
         cli_tree, _ = cli_module._build_main_tree(evidence_index, folder_index)
 
         _, verifier_root = verify_evidence_index(evidence_index, [], folder_index=folder_index)

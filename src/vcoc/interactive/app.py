@@ -1,4 +1,4 @@
-"""Main menu: key bindings, screen switching, store lifecycle.
+"""Main menu: key bindings and screen switching.
 
 Screens run as a sequence of independent, top-level Application.run() calls
 -- never nested (nesting an Application.run() inside another running
@@ -9,17 +9,13 @@ runs to completion, then the next loop iteration draws a fresh menu.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from prompt_toolkit import Application
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import Frame
 
-from vcoc.storage import EncryptedStore
-
-from . import config, forms, menu, store_bridge
+from . import config, menu
 
 QUIT_INDEX = len(menu.MENU_ITEMS) - 1
 
@@ -79,30 +75,10 @@ def _run_main_menu() -> int:
     return QUIT_INDEX if result is None else result
 
 
-def _get_store() -> EncryptedStore | None:
-    """Ask the user once whether to open/create the encrypted store mirror."""
-    key_path, db_path = store_bridge.DEFAULT_KEY_PATH, store_bridge.DEFAULT_DB_PATH
-    if not Path(key_path).exists():
-        if not forms.confirm(f"No encrypted store key found. Generate one now at {key_path}?"):
-            return None
-    store, message = store_bridge.open_or_create_store(key_path, db_path)
-    forms.show_output("Encrypted store", message)
-    return store
-
-
 def run_shell() -> None:
-    store: EncryptedStore | None = None
-    store_prompted = False
     shell_config = config.load_config()
-    try:
-        while True:
-            index = _run_main_menu()
-            if index == QUIT_INDEX:
-                break
-            if index == 0 and not store_prompted:  # Add evidence: first-use store prompt
-                store_prompted = True
-                store = _get_store()
-            menu.ACTIONS[index](store, shell_config)
-    finally:
-        if store is not None:
-            store.close()
+    while True:
+        index = _run_main_menu()
+        if index == QUIT_INDEX:
+            break
+        menu.ACTIONS[index](shell_config)

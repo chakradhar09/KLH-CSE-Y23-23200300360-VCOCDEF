@@ -108,29 +108,31 @@ def load_events(conn: sqlite3.Connection) -> list[CustodyEvent]:
     return [row_to_event(r) for r in conn.execute("SELECT * FROM custody_log ORDER BY idx")]
 
 
+_EVIDENCE_SQL = (
+    "INSERT OR REPLACE INTO evidence (evidence_id, original_filename, sha256, size_bytes, added_at,"
+    " source_path, folder_id) VALUES (?,?,?,?,?,?,?)"
+)
+
+
+def _evidence_row(e: Evidence) -> tuple:
+    return (e.evidence_id, e.original_filename, e.sha256, e.size_bytes, e.added_at, e.source_path, e.folder_id)
+
+
 def put_evidence(conn: sqlite3.Connection, evidence: Evidence) -> None:
     with conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO evidence (evidence_id, original_filename, sha256, size_bytes, added_at,"
-            " source_path, folder_id) VALUES (?,?,?,?,?,?,?)",
-            (
-                evidence.evidence_id,
-                evidence.original_filename,
-                evidence.sha256,
-                evidence.size_bytes,
-                evidence.added_at,
-                evidence.source_path,
-                evidence.folder_id,
-            ),
-        )
+        conn.execute(_EVIDENCE_SQL, _evidence_row(evidence))
 
 
 def load_evidence_index(conn: sqlite3.Connection) -> dict:
     return {r["evidence_id"]: Evidence(**dict(r)).__dict__ for r in conn.execute("SELECT * FROM evidence")}
 
 
-def put_folder(conn: sqlite3.Connection, folder_id: str, root: str, member_ids: list[str]) -> None:
+def put_folder(
+    conn: sqlite3.Connection, folder_id: str, root: str, member_ids: list[str], members: list[Evidence] = ()
+) -> None:
+    """Record a folder batch; ``members`` are written in the same transaction."""
     with conn:
+        conn.executemany(_EVIDENCE_SQL, [_evidence_row(m) for m in members])
         conn.execute(
             "INSERT OR REPLACE INTO folders (folder_id, root, member_ids) VALUES (?,?,?)",
             (folder_id, root, json.dumps(member_ids)),

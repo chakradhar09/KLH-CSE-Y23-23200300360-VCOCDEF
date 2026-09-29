@@ -54,6 +54,7 @@ def test_shell_verify_chain_sidebar_screen_with_keys_present(tmp_path):
     """Verify chain (menu item 4) is now a sidebar+detail screen, one row
     per custody event -- navigable with up/down, not a static text dump."""
     from vcoc.ecdsa_signer import generate_keypair, save_keypair
+    from vcoc import db
     from vcoc.hash_chain import HashChain
 
     signing_key, _ = generate_keypair()
@@ -62,7 +63,7 @@ def test_shell_verify_chain_sidebar_screen_with_keys_present(tmp_path):
     chain = HashChain()
     chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
     chain.add_event(evidence_id="EV002", actor="A. Smith", action="reviewed", signing_key=signing_key)
-    chain.save(str(tmp_path / "custody_log.json"))
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     keys = (
         "4"  # Verify chain
@@ -86,7 +87,6 @@ def test_shell_add_evidence_then_check(tmp_path):
 
     keys = (
         "1"  # Add evidence
-        + "n"  # decline encrypted-store creation
         + str(evidence_file) + "\r"  # file path
         + "EV001\r"  # evidence id
         + "x"  # dismiss output screen
@@ -97,9 +97,9 @@ def test_shell_add_evidence_then_check(tmp_path):
     )
     run_with_keys(keys, tmp_path)
 
-    index_path = tmp_path / "evidence_index.json"
-    assert index_path.exists()
-    assert '"EV001"' in index_path.read_text(encoding="utf-8")
+    from vcoc import db
+
+    assert "EV001" in db.load_evidence_index(db.connect(tmp_path / "vcoc.db"))
 
 
 def test_shell_verification_screen_empty_state(tmp_path):
@@ -117,7 +117,7 @@ def test_shell_verification_screen_empty_state(tmp_path):
     run_with_keys(keys, tmp_path)
 
 
-def test_shell_add_evidence_folder_mirrors_all_members(tmp_path):
+def test_shell_add_evidence_folder_registers_all_members(tmp_path):
     folder = tmp_path / "batchdir"
     folder.mkdir()
     (folder / "a.txt").write_text("aaa", encoding="utf-8")
@@ -125,8 +125,6 @@ def test_shell_add_evidence_folder_mirrors_all_members(tmp_path):
 
     keys = (
         "1"  # Add evidence
-        + "y"  # accept encrypted-store creation
-        + "x"  # dismiss "Encrypted store" info screen
         + str(folder) + "\r"  # folder path
         + "BATCH1\r"  # folder/batch id
         + "n"  # decline batch custody-event logging
@@ -135,24 +133,11 @@ def test_shell_add_evidence_folder_mirrors_all_members(tmp_path):
     )
     run_with_keys(keys, tmp_path)
 
-    index_path = tmp_path / "evidence_index.json"
-    assert index_path.exists()
-    assert '"BATCH1/a.txt"' in index_path.read_text(encoding="utf-8")
-    assert '"BATCH1/b.txt"' in index_path.read_text(encoding="utf-8")
+    from vcoc import db
 
-    import sys as _sys
-
-    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-    from vcoc.storage import EncryptedStore, load_key
-
-    key = load_key(str(tmp_path / "vcoc.key"))
-    store = EncryptedStore(str(tmp_path / "evidence_store.db"), key)
-    try:
-        stored_ids = {e.evidence_id for e in store.list_evidence()}
-    finally:
-        store.close()
-    assert "BATCH1/a.txt" in stored_ids
-    assert "BATCH1/b.txt" in stored_ids
+    conn = db.connect(tmp_path / "vcoc.db")
+    assert {"BATCH1/a.txt", "BATCH1/b.txt"} <= set(db.load_evidence_index(conn))
+    assert "BATCH1" in db.load_folder_index(conn)
 
 
 def test_shell_log_event_no_keys_cancels_cleanly(tmp_path):
@@ -178,7 +163,7 @@ def test_shell_log_event_multi_select_with_keys_present(tmp_path):
     ev2.write_text("bbb", encoding="utf-8")
 
     keys = (
-        "1" + "n" + str(ev1) + "\r" + "EV001\r" + "x"
+        "1" + str(ev1) + "\r" + "EV001\r" + "x"
         + "1" + str(ev2) + "\r" + "EV002\r" + "x"
         + "3"  # Log custody event
         + "\r"  # ensure_keys: accept default private_key.pem path (exists on disk)
@@ -213,7 +198,6 @@ def test_shell_verification_screen_after_add_evidence(tmp_path):
 
     keys = (
         "1"  # Add evidence
-        + "n"  # decline encrypted-store creation
         + str(evidence_file) + "\r"
         + "EV001\r"
         + "x"

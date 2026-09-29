@@ -26,7 +26,7 @@ def run_multi_select(keys: str) -> list[str] | None:
     with create_pipe_input() as pipe_input:
         pipe_input.send_text(keys)
         with create_app_session(input=pipe_input, output=DummyOutput()):
-            return evidence_search.search_evidence_multi(INDEX, None)
+            return evidence_search.search_evidence_multi(INDEX)
 
 
 def test_space_toggle_two_rows_then_enter_returns_both():

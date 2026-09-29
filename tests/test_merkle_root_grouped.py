@@ -15,9 +15,7 @@ from vcoc.merkle import MerkleTree, nested_proof_from_dict, verify_nested_proof
 
 def _ns(**kwargs) -> argparse.Namespace:
     defaults = dict(
-        evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
-        folder_index=cli_module.DEFAULT_FOLDER_INDEX,
-        log=cli_module.DEFAULT_LOG,
+        db=cli_module.DEFAULT_DB,
         private_key=None,
         out=None,
     )
@@ -40,8 +38,8 @@ def test_merkle_root_matches_hand_built_two_level_tree(tmp_path, monkeypatch, ca
     (tmp_path / "solo.bin").write_bytes(b"solo")
     cli_module.cmd_add_evidence(_ns(file=str(tmp_path / "solo.bin"), evidence_id="SOLO1"))
 
-    folder_index = json.loads(Path(cli_module.DEFAULT_FOLDER_INDEX).read_text(encoding="utf-8"))
-    evidence_index = cli_module._load_evidence_index(cli_module.DEFAULT_EVIDENCE_INDEX)
+    folder_index = cli_module._load_folder_index(cli_module.DEFAULT_DB)
+    evidence_index = cli_module._load_evidence_index(cli_module.DEFAULT_DB)
     # Group ids ("BATCH1", "SOLO1") sort alphabetically -- leaves must follow
     # that same order, not be sorted by hash value.
     expected_leaves = [folder_index["BATCH1"]["root"], evidence_index["SOLO1"]["sha256"]]
@@ -94,8 +92,8 @@ def test_merkle_root_lists_every_leaf_with_hash_and_folder_count(tmp_path, monke
     (tmp_path / "solo.bin").write_bytes(b"solo")
     cli_module.cmd_add_evidence(_ns(file=str(tmp_path / "solo.bin"), evidence_id="SOLO1"))
 
-    folder_index = json.loads(Path(cli_module.DEFAULT_FOLDER_INDEX).read_text(encoding="utf-8"))
-    evidence_index = cli_module._load_evidence_index(cli_module.DEFAULT_EVIDENCE_INDEX)
+    folder_index = cli_module._load_folder_index(cli_module.DEFAULT_DB)
+    evidence_index = cli_module._load_evidence_index(cli_module.DEFAULT_DB)
 
     capsys.readouterr()
     cli_module.cmd_merkle_root(_ns())

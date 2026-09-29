@@ -1,4 +1,4 @@
-"""Live search-as-you-type screen over evidence_index.json + EncryptedStore."""
+"""Live search-as-you-type screen over the evidence table."""
 
 from __future__ import annotations
 
@@ -10,24 +10,29 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import D
 from prompt_toolkit.widgets import Frame
 
-from vcoc.storage import EncryptedStore
 
-from . import store_bridge
+def search(index: dict, query: str) -> list[dict]:
+    """Case-insensitive substring match on evidence_id or original_filename."""
+    q = query.lower()
+    results = [
+        {
+            "evidence_id": eid,
+            "original_filename": rec.get("original_filename", ""),
+            "sha256": rec.get("sha256", ""),
+        }
+        for eid, rec in index.items()
+    ]
+    if q:
+        results = [r for r in results if q in r["evidence_id"].lower() or q in r["original_filename"].lower()]
+    results.sort(key=lambda r: r["evidence_id"])
+    return results
 
 
 def _format_result(entry: dict, selected: bool) -> str:
     marker = "▸" if selected else " "
     eid = entry["evidence_id"].ljust(10)
     fname = entry["original_filename"][:28].ljust(28)
-    sha = (entry["index_sha256"] or entry["store_sha256"] or "")[:8]
-    tag = entry["tag"]
-    line = f"{marker} {eid} {fname} {sha}...  [{tag}]"
-    if tag == "DIVERGED":
-        line += (
-            f"\n     index sha256: {entry['index_sha256']}"
-            f"\n     store sha256: {entry['store_sha256']}"
-        )
-    return line
+    return f"{marker} {eid} {fname} {entry['sha256'][:8]}..."
 
 
 def _format_result_multi(entry: dict, selected: bool, checked: bool) -> str:
@@ -35,12 +40,10 @@ def _format_result_multi(entry: dict, selected: bool, checked: bool) -> str:
     box = "[x]" if checked else "[ ]"
     eid = entry["evidence_id"].ljust(10)
     fname = entry["original_filename"][:28].ljust(28)
-    sha = (entry["index_sha256"] or entry["store_sha256"] or "")[:8]
-    tag = entry["tag"]
-    return f"{marker} {box} {eid} {fname} {sha}...  [{tag}]"
+    return f"{marker} {box} {eid} {fname} {entry['sha256'][:8]}..."
 
 
-def search_evidence_multi(index: dict, store: EncryptedStore | None) -> list[str] | None:
+def search_evidence_multi(index: dict) -> list[str] | None:
     """Same live-filter screen as search_evidence, but Space toggles the
     highlighted row into an accumulating selection set. Enter submits the
     accumulated set -- or, if nothing was toggled, just the highlighted row
@@ -48,7 +51,7 @@ def search_evidence_multi(index: dict, store: EncryptedStore | None) -> list[str
     cancels (returns None).
     """
     query_buf = Buffer(multiline=False)
-    results: list[dict] = store_bridge.search(index, store, "")
+    results: list[dict] = search(index, "")
     selected = [0]
     checked: set[str] = set()
 
@@ -62,7 +65,7 @@ def search_evidence_multi(index: dict, store: EncryptedStore | None) -> list[str
 
     def refresh(_=None):
         nonlocal results
-        results = store_bridge.search(index, store, query_buf.text)
+        results = search(index, query_buf.text)
         selected[0] = min(selected[0], max(len(results) - 1, 0))
 
     query_buf.on_text_changed += refresh
@@ -129,10 +132,10 @@ def search_evidence_multi(index: dict, store: EncryptedStore | None) -> list[str
     return app.run()
 
 
-def search_evidence(index: dict, store: EncryptedStore | None) -> str | None:
+def search_evidence(index: dict) -> str | None:
     """Run the live search screen; return the selected evidence_id, or None."""
     query_buf = Buffer(multiline=False)
-    results: list[dict] = store_bridge.search(index, store, "")
+    results: list[dict] = search(index, "")
     selected = [0]
 
     def get_results_text():
@@ -145,7 +148,7 @@ def search_evidence(index: dict, store: EncryptedStore | None) -> str | None:
 
     def refresh(_=None):
         nonlocal results
-        results = store_bridge.search(index, store, query_buf.text)
+        results = search(index, query_buf.text)
         selected[0] = min(selected[0], max(len(results) - 1, 0))
 
     query_buf.on_text_changed += refresh

@@ -18,6 +18,8 @@ from prompt_toolkit.widgets import Frame
 
 import cli as cli_module
 import verifier as verifier_module
+from vcoc import db
+from vcoc.hash_chain import HashChain
 from vcoc.visualize import build_chain_view, format_entry_detail_lines
 
 TABS = ["Chain", "Evidence", "Merkle"]
@@ -28,6 +30,23 @@ def _load_json(path: str) -> object | None:
     if not p.exists():
         return None
     return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _open_db():
+    return db.connect(cli_module.DEFAULT_DB) if Path(cli_module.DEFAULT_DB).exists() else None
+
+
+def _load_entries() -> list[dict] | None:
+    conn = _open_db()
+    return None if conn is None else [e.to_dict() for e in HashChain.load_db(conn).entries]
+
+
+def _load_index() -> dict:
+    return cli_module._load_evidence_index(cli_module.DEFAULT_DB)
+
+
+def _load_folders() -> dict:
+    return cli_module._load_folder_index(cli_module.DEFAULT_DB)
 
 
 def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[str]]:
@@ -45,9 +64,9 @@ def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[
     pointed it. Falls back to the cwd default for callers with no
     shell_config (or a config that hasn't set a key yet), same as before.
     """
-    entries = _load_json(cli_module.DEFAULT_LOG)
+    entries = _load_entries()
     if entries is None:
-        return ["No custody log found"], [f"{cli_module.DEFAULT_LOG} does not exist yet."]
+        return ["No custody log found"], [f"{cli_module.DEFAULT_DB} does not exist yet."]
     public_key_path = (shell_config or {}).get("public_key") or cli_module.DEFAULT_PUBLIC_KEY
     if not Path(public_key_path).exists():
         return ["No public key found"], [f"{public_key_path} does not exist yet -- run Generate keypair first."]
@@ -56,7 +75,7 @@ def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[
 
     verifying_key = VerifyingKey.from_pem(Path(public_key_path).read_bytes())
     if not entries:
-        return ["No custody events logged yet"], [["custody_log.json is empty."]]
+        return ["No custody events logged yet"], [["The custody log is empty."]]
 
     per_entry = verifier_module.verify_each(entries, verifying_key)
     chain_view = build_chain_view(entries)
@@ -74,11 +93,11 @@ def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[
 
 
 def _run_evidence_check() -> tuple[list[str], list[list[str]]]:
-    index = _load_json(cli_module.DEFAULT_EVIDENCE_INDEX)
+    index = _load_index()
     if not index:
-        return ["No evidence registered"], [["evidence_index.json is empty or missing."]]
-    entries = _load_json(cli_module.DEFAULT_LOG) or []
-    folder_index = _load_json(cli_module.DEFAULT_FOLDER_INDEX) or {}
+        return ["No evidence registered"], [["No evidence in the database."]]
+    entries = _load_entries() or []
+    folder_index = _load_folders()
 
     results, root = verifier_module.verify_evidence_index(index, entries, folder_index=folder_index)
     rows = []
@@ -103,10 +122,10 @@ def _run_evidence_check() -> tuple[list[str], list[list[str]]]:
 
 
 def _run_merkle_check() -> tuple[list[str], list[list[str]]]:
-    index = _load_json(cli_module.DEFAULT_EVIDENCE_INDEX)
+    index = _load_index()
     if not index:
-        return ["No evidence registered"], [["evidence_index.json is empty or missing -- nothing to build a Merkle root from."]]
-    folder_index = _load_json(cli_module.DEFAULT_FOLDER_INDEX) or {}
+        return ["No evidence registered"], [["No evidence in the database -- nothing to build a Merkle root from."]]
+    folder_index = _load_folders()
 
     # Group by folder_id (or the record's own id if solo) the same way
     # cli.py's _build_main_tree does, so this independently recomputed root
@@ -117,7 +136,7 @@ def _run_merkle_check() -> tuple[list[str], list[list[str]]]:
     ]
     root = verifier_module.merkle_root(leaves)
     rows = [f"Root over {len(leaves)} leaf(ves)/folder(s)"]
-    details = [[f"Recomputed Merkle root (from evidence_index.json, independent implementation):", root]]
+    details = [[f"Recomputed Merkle root (from the evidence table, independent implementation):", root]]
 
     proof_path = "proof.json"
     if Path(proof_path).exists():

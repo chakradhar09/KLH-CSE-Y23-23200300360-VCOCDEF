@@ -8,10 +8,8 @@ import io
 from pathlib import Path
 
 import cli as cli_module
-from vcoc.storage import EncryptedStore
-
 from . import config as config_module
-from . import forms, store_bridge
+from . import forms
 from .evidence_search import search_evidence, search_evidence_multi
 from .verification_screen import run_verification_screen, run_verify_chain_screen
 
@@ -50,17 +48,14 @@ def _defaults() -> argparse.Namespace:
     """A namespace pre-filled with build_parser()'s own defaults."""
     return argparse.Namespace(
         db=cli_module.DEFAULT_DB,
-        evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
-        folder_index=cli_module.DEFAULT_FOLDER_INDEX,
-        log=cli_module.DEFAULT_LOG,
         private_key=cli_module.DEFAULT_PRIVATE_KEY,
         public_key=cli_module.DEFAULT_PUBLIC_KEY,
     )
 
 
-def _pick_evidence_id(store: EncryptedStore | None) -> str | None:
-    index = cli_module._load_evidence_index(cli_module.DEFAULT_EVIDENCE_INDEX)
-    return search_evidence(index, store)
+def _pick_evidence_id() -> str | None:
+    index = cli_module._load_evidence_index(cli_module.DEFAULT_DB)
+    return search_evidence(index)
 
 
 def ensure_keys(shell_config: dict, config_path: str = config_module.DEFAULT_CONFIG_PATH) -> bool:
@@ -101,7 +96,7 @@ def ensure_keys(shell_config: dict, config_path: str = config_module.DEFAULT_CON
     return True
 
 
-def action_add_evidence(store: EncryptedStore | None, shell_config: dict) -> None:
+def action_add_evidence(shell_config: dict) -> None:
     file_path = forms.prompt_path("Add evidence", "File path:")
     if file_path is None:
         return
@@ -113,7 +108,6 @@ def action_add_evidence(store: EncryptedStore | None, shell_config: dict) -> Non
     ns = _defaults()
     ns.file = file_path
     ns.evidence_id = evidence_id
-    ns.folder_index = cli_module.DEFAULT_FOLDER_INDEX
     ns.actor = None
     ns.private_key = None
 
@@ -121,7 +115,6 @@ def action_add_evidence(store: EncryptedStore | None, shell_config: dict) -> Non
         if not ensure_keys(shell_config):
             return
         ns.private_key = shell_config["private_key"]
-        ns.log = shell_config.get("log", cli_module.DEFAULT_LOG)
         actor = forms.prompt_text("Add evidence", "Actor:")
         if actor is None:
             return
@@ -129,33 +122,11 @@ def action_add_evidence(store: EncryptedStore | None, shell_config: dict) -> Non
 
     output = _run_cmd(cli_module.cmd_add_evidence, ns)
 
-    if store is not None:
-        from vcoc.models import Evidence
-
-        index = cli_module._load_evidence_index(ns.evidence_index)
-        if is_folder:
-            member_ids = [eid for eid, rec in index.items() if rec.get("folder_id") == evidence_id]
-            mirrored, failed = 0, 0
-            for member_id in member_ids:
-                err = store_bridge.mirror_to_store(store, Evidence(**index[member_id]))
-                if err:
-                    failed += 1
-                else:
-                    mirrored += 1
-            output += f"\nMirrored {mirrored}/{len(member_ids)} folder member(s) to store"
-            if failed:
-                output += f" ({failed} failed)"
-        else:
-            rec = index.get(evidence_id)
-            if rec is not None:
-                err = store_bridge.mirror_to_store(store, Evidence(**rec))
-                output += "\n" + (f"Warning: {err}" if err else f"Mirrored {evidence_id} to store")
-
     forms.show_output("Add evidence", output)
 
 
-def action_check_evidence(store: EncryptedStore | None, shell_config: dict) -> None:
-    evidence_id = _pick_evidence_id(store)
+def action_check_evidence(shell_config: dict) -> None:
+    evidence_id = _pick_evidence_id()
     if evidence_id is None:
         return
     ns = _defaults()
@@ -165,11 +136,11 @@ def action_check_evidence(store: EncryptedStore | None, shell_config: dict) -> N
     forms.show_output("Check evidence integrity", output)
 
 
-def action_log_event(store: EncryptedStore | None, shell_config: dict) -> None:
+def action_log_event(shell_config: dict) -> None:
     if not ensure_keys(shell_config):
         return
-    index = cli_module._load_evidence_index(cli_module.DEFAULT_EVIDENCE_INDEX)
-    evidence_ids = search_evidence_multi(index, store)
+    index = cli_module._load_evidence_index(cli_module.DEFAULT_DB)
+    evidence_ids = search_evidence_multi(index)
     if evidence_ids is None:
         return
     actor = forms.prompt_text("Log custody event", "Actor:")
@@ -203,19 +174,19 @@ def action_log_event(store: EncryptedStore | None, shell_config: dict) -> None:
     forms.show_output("Log custody event", output)
 
 
-def action_verify_chain(store: EncryptedStore | None, shell_config: dict) -> None:
+def action_verify_chain(shell_config: dict) -> None:
     if not ensure_keys(shell_config):
         return
     run_verify_chain_screen(shell_config)
 
 
-def action_merkle_root(store: EncryptedStore | None, shell_config: dict) -> None:
+def action_merkle_root(shell_config: dict) -> None:
     output = _run_cmd(cli_module.cmd_merkle_root, _defaults())
     forms.show_output("Merkle root", output)
 
 
-def action_merkle_proof(store: EncryptedStore | None, shell_config: dict) -> None:
-    evidence_id = _pick_evidence_id(store)
+def action_merkle_proof(shell_config: dict) -> None:
+    evidence_id = _pick_evidence_id()
     if evidence_id is None:
         return
     out_path = forms.prompt_path("Merkle proof", "Output file (blank for stdout):")
@@ -228,7 +199,7 @@ def action_merkle_proof(store: EncryptedStore | None, shell_config: dict) -> Non
     forms.show_output("Merkle proof", output)
 
 
-def action_init_keys(store: EncryptedStore | None, shell_config: dict) -> None:
+def action_init_keys(shell_config: dict) -> None:
     ns = _defaults()
     private_key = forms.prompt_path("Generate keypair", "Private key path:", ns.private_key)
     if private_key is None:
@@ -242,7 +213,7 @@ def action_init_keys(store: EncryptedStore | None, shell_config: dict) -> None:
     forms.show_output("Generate keypair", output)
 
 
-def action_verification(store: EncryptedStore | None, shell_config: dict) -> None:
+def action_verification(shell_config: dict) -> None:
     run_verification_screen(shell_config)
 
 

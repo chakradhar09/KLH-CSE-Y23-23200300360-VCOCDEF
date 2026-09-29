@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
 
+from vcoc import db
 from vcoc.ecdsa_signer import generate_keypair, save_keypair
 from vcoc.hash_chain import HashChain
 from vcoc.interactive import menu, verification_screen
@@ -29,7 +30,7 @@ import cli as cli_module
 def _write_signed_log(log_path: Path, signing_key) -> None:
     chain = HashChain()
     chain.add_event(evidence_id="EV001", actor="tester", action="collected", signing_key=signing_key)
-    chain.save(str(log_path))
+    chain.save_db(db.connect(log_path))
 
 
 def test_chain_check_recognizes_keypair_at_configured_non_default_path(tmp_path, monkeypatch):
@@ -44,7 +45,7 @@ def test_chain_check_recognizes_keypair_at_configured_non_default_path(tmp_path,
     signing_key, verifying_key = generate_keypair()
     save_keypair(signing_key, private_path, public_path)
 
-    log_path = tmp_path / "custody_log.json"
+    log_path = tmp_path / "vcoc.db"
     _write_signed_log(log_path, signing_key)
 
     shell_config = {"private_key": str(private_path), "public_key": str(public_path)}
@@ -61,7 +62,7 @@ def test_chain_check_falls_back_to_default_when_no_shell_config(tmp_path, monkey
     signing_key, verifying_key = generate_keypair()
     save_keypair(signing_key, "private_key.pem", "public_key.pem")
 
-    log_path = tmp_path / "custody_log.json"
+    log_path = tmp_path / "vcoc.db"
     _write_signed_log(log_path, signing_key)
 
     rows, details = verification_screen._run_chain_check({})
@@ -83,7 +84,7 @@ def test_chain_check_detail_lists_all_evidence_ids_for_multi_evidence_entry(tmp_
         case_number="C-001",
         tag="disk+memory",
     )
-    chain.save(str(tmp_path / "custody_log.json"))
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     rows, details = verification_screen._run_chain_check({})
 
@@ -100,7 +101,7 @@ def test_chain_check_detail_shows_legacy_entry_without_clutter(tmp_path, monkeyp
     signing_key, _ = generate_keypair()
     save_keypair(signing_key, "private_key.pem", "public_key.pem")
 
-    log_path = tmp_path / "custody_log.json"
+    log_path = tmp_path / "vcoc.db"
     _write_signed_log(log_path, signing_key)
 
     rows, details = verification_screen._run_chain_check({})
@@ -121,7 +122,7 @@ def test_chain_check_lists_one_row_per_custody_event(tmp_path, monkeypatch):
     chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
     chain.add_event(evidence_id="EV002", actor="A. Smith", action="reviewed", signing_key=signing_key)
     chain.add_event(evidence_id="EV003", actor="A. Smith", action="transferred", signing_key=signing_key)
-    chain.save(str(tmp_path / "custody_log.json"))
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     rows, details = verification_screen._run_chain_check({})
 
@@ -146,7 +147,7 @@ def test_chain_check_marks_tampered_entry_row_distinctly(tmp_path, monkeypatch):
     chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
     chain.add_event(evidence_id="EV002", actor="A. Smith", action="reviewed", signing_key=signing_key)
     chain.entries[1].actor = "Mallory"
-    chain.save(str(tmp_path / "custody_log.json"))
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     rows, details = verification_screen._run_chain_check({})
 
@@ -163,7 +164,7 @@ def test_chain_check_detail_shows_both_hashes_and_signature_per_event(tmp_path, 
 
     chain = HashChain()
     e0 = chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
-    chain.save(str(tmp_path / "custody_log.json"))
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     rows, details = verification_screen._run_chain_check({})
 
@@ -184,12 +185,12 @@ def test_chain_check_missing_log_file_preserved(tmp_path, monkeypatch):
 
 
 def test_chain_check_empty_log_array_has_explanatory_row(tmp_path, monkeypatch):
-    """An existing but empty custody_log.json (distinct from a missing
+    """An existing but empty vcoc.db (distinct from a missing
     file) gets its own explanatory row, not a crash or silent zero rows."""
     monkeypatch.chdir(tmp_path)
     signing_key, _ = generate_keypair()
     save_keypair(signing_key, "private_key.pem", "public_key.pem")
-    (tmp_path / "custody_log.json").write_text("[]", encoding="utf-8")
+    db.connect(tmp_path / "vcoc.db").close()  # schema only, no entries
 
     rows, details = verification_screen._run_chain_check({})
 
@@ -199,7 +200,7 @@ def test_chain_check_empty_log_array_has_explanatory_row(tmp_path, monkeypatch):
 
 def test_chain_check_reports_missing_key_at_configured_path(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    log_path = tmp_path / "custody_log.json"
+    log_path = tmp_path / "vcoc.db"
     signing_key, _ = generate_keypair()
     _write_signed_log(log_path, signing_key)
 
@@ -227,9 +228,7 @@ def test_menu_action_merkle_root_does_not_crash_on_missing_folder_index_attr(tmp
         argparse.Namespace(
             file=str(f),
             evidence_id="EV001",
-            evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
-            folder_index=cli_module.DEFAULT_FOLDER_INDEX,
-            log=cli_module.DEFAULT_LOG,
+            db=cli_module.DEFAULT_DB,
             private_key=None,
             actor=None,
         )
@@ -245,7 +244,7 @@ def test_menu_action_merkle_root_does_not_crash_on_missing_folder_index_attr(tmp
 def test_verification_screen_evidence_tab_handles_folder_batch_records(tmp_path, monkeypatch):
     """Bug repro: verify_evidence_index groups by folder_id and looks up
     folder_index[gid]["root"] for any grouped id not in evidence_index --
-    but _run_evidence_check() never loads/passes folder_index.json, so a
+    but _run_evidence_check() never loads/passes the folders table, so a
     folder-registered evidence set raises KeyError instead of rendering."""
     monkeypatch.chdir(tmp_path)
     folder = tmp_path / "batchdir"
@@ -256,9 +255,7 @@ def test_verification_screen_evidence_tab_handles_folder_batch_records(tmp_path,
         argparse.Namespace(
             file=str(folder),
             evidence_id="BATCH1",
-            evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
-            folder_index=cli_module.DEFAULT_FOLDER_INDEX,
-            log=cli_module.DEFAULT_LOG,
+            db=cli_module.DEFAULT_DB,
             private_key=None,
             actor=None,
         )
@@ -284,9 +281,7 @@ def test_verification_screen_merkle_tab_verifies_nested_proof_format(tmp_path, m
         argparse.Namespace(
             file=str(f),
             evidence_id="EV001",
-            evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
-            folder_index=cli_module.DEFAULT_FOLDER_INDEX,
-            log=cli_module.DEFAULT_LOG,
+            db=cli_module.DEFAULT_DB,
             private_key=None,
             actor=None,
         )
@@ -294,8 +289,7 @@ def test_verification_screen_merkle_tab_verifies_nested_proof_format(tmp_path, m
     cli_module.cmd_merkle_proof(
         argparse.Namespace(
             evidence_id="EV001",
-            evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
-            folder_index=cli_module.DEFAULT_FOLDER_INDEX,
+            db=cli_module.DEFAULT_DB,
             out="proof.json",
         )
     )
@@ -317,7 +311,7 @@ def test_run_verify_chain_screen_uses_shared_sidebar_detail_runner(tmp_path, mon
     chain = HashChain()
     chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
     chain.add_event(evidence_id="EV002", actor="A. Smith", action="reviewed", signing_key=signing_key)
-    chain.save(str(tmp_path / "custody_log.json"))
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     captured = {}
 
@@ -344,7 +338,7 @@ def test_action_verify_chain_opens_sidebar_screen_not_static_output(tmp_path, mo
 
     chain = HashChain()
     chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
-    chain.save(str(tmp_path / "custody_log.json"))
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     called = {}
 
@@ -358,6 +352,6 @@ def test_action_verify_chain_opens_sidebar_screen_not_static_output(tmp_path, mo
     monkeypatch.setattr(menu.forms, "show_output", fail_show_output)
 
     shell_config = {"private_key": "private_key.pem", "public_key": "public_key.pem"}
-    menu.action_verify_chain(None, shell_config)
+    menu.action_verify_chain(shell_config)
 
     assert called["shell_config"] == shell_config

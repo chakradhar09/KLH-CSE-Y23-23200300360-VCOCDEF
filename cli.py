@@ -29,9 +29,6 @@ from vcoc.models import Evidence
 from vcoc.visualize import build_chain_view, build_tree_view, format_entry_detail_lines
 
 DEFAULT_DB = "vcoc.db"
-DEFAULT_LOG = "custody_log.json"
-DEFAULT_EVIDENCE_INDEX = "evidence_index.json"
-DEFAULT_FOLDER_INDEX = "folder_index.json"
 DEFAULT_PRIVATE_KEY = "private_key.pem"
 DEFAULT_PUBLIC_KEY = "public_key.pem"
 
@@ -43,26 +40,16 @@ def cmd_init_keys(args: argparse.Namespace) -> None:
     print(f"Wrote public key  -> {args.public_key}")
 
 
-def _load_evidence_index(path: str) -> dict:
-    p = Path(path)
-    if not p.exists():
+def _load_evidence_index(db_path: str) -> dict:
+    if not Path(db_path).exists():
         return {}
-    return json.loads(p.read_text(encoding="utf-8"))
+    return db.load_evidence_index(db.connect(db_path))
 
 
-def _save_evidence_index(path: str, index: dict) -> None:
-    Path(path).write_text(json.dumps(index, indent=2), encoding="utf-8")
-
-
-def _load_folder_index(path: str) -> dict:
-    p = Path(path)
-    if not p.exists():
+def _load_folder_index(db_path: str) -> dict:
+    if not Path(db_path).exists():
         return {}
-    return json.loads(p.read_text(encoding="utf-8"))
-
-
-def _save_folder_index(path: str, index: dict) -> None:
-    Path(path).write_text(json.dumps(index, indent=2), encoding="utf-8")
+    return db.load_folder_index(db.connect(db_path))
 
 
 def cmd_add_evidence(args: argparse.Namespace) -> None:
@@ -84,9 +71,7 @@ def _add_evidence_file(args: argparse.Namespace, folder_id: str | None = None) -
         source_path=str(Path(args.file).resolve()),
         folder_id=folder_id,
     )
-    index = _load_evidence_index(args.evidence_index)
-    index[evidence.evidence_id] = evidence.__dict__
-    _save_evidence_index(args.evidence_index, index)
+    db.put_evidence(db.connect(args.db), evidence)
     print(f"Registered evidence {evidence.evidence_id}: sha256={digest}")
     return evidence
 
@@ -116,7 +101,7 @@ def _add_evidence_folder(args: argparse.Namespace) -> None:
     if skipped:
         print(f"Skipped {skipped} symlink/special entries.")
 
-    index = _load_evidence_index(args.evidence_index)
+    members: list[Evidence] = []
     member_ids: list[str] = []
     leaves: list[str] = []
     for i, f in enumerate(files, 1):
@@ -138,32 +123,29 @@ def _add_evidence_folder(args: argparse.Namespace) -> None:
             source_path=str(f.resolve()),
             folder_id=folder_id,
         )
-        index[evidence_id] = evidence.__dict__
+        members.append(evidence)
         member_ids.append(evidence_id)
         leaves.append(digest)
-
-    _save_evidence_index(args.evidence_index, index)
 
     if not leaves:
         print("No files were successfully hashed; folder not registered.")
         sys.exit(1)
 
     subtree = MerkleTree(leaves)
-    folder_index = _load_folder_index(args.folder_index)
-    folder_index[folder_id] = {"root": subtree.root, "member_ids": member_ids}
-    _save_folder_index(args.folder_index, folder_index)
+    conn = db.connect(args.db)
+    db.put_folder(conn, folder_id, subtree.root, member_ids, members)
     print(f"Registered folder {folder_id}: {len(member_ids)} file(s), subtree root={subtree.root}")
 
     if args.private_key:
         signing_key = load_signing_key(args.private_key)
-        chain = HashChain.load(args.log) if Path(args.log).exists() else HashChain()
+        chain = HashChain.load_db(conn)
         entry = chain.add_event(
             evidence_id=folder_id,
             actor=getattr(args, "actor", None) or "unknown",
             action="batch-register",
             signing_key=signing_key,
         )
-        chain.save(args.log)
+        chain.save_db(conn)
         print(f"Logged batch-register event #{entry.index} for {folder_id}")
 
 
@@ -197,7 +179,7 @@ def cmd_log_event(args: argparse.Namespace) -> None:
 
 
 def cmd_check_evidence(args: argparse.Namespace) -> None:
-    index = _load_evidence_index(args.evidence_index)
+    index = _load_evidence_index(args.db)
     if args.evidence_id not in index:
         print(f"Unknown evidence id: {args.evidence_id}")
         sys.exit(1)
@@ -280,11 +262,11 @@ def _build_main_tree(evidence_index: dict, folder_index: dict) -> tuple[MerkleTr
 
 
 def cmd_merkle_root(args: argparse.Namespace) -> None:
-    index = _load_evidence_index(args.evidence_index)
+    index = _load_evidence_index(args.db)
     if not index:
         print("No evidence registered yet.")
         sys.exit(1)
-    folder_index = _load_folder_index(args.folder_index)
+    folder_index = _load_folder_index(args.db)
     tree, grouped_ids = _build_main_tree(index, folder_index)
     print(f"Merkle root over {len(grouped_ids)} evidence file(s)/folder(s): {tree.root}")
 
@@ -298,11 +280,11 @@ def cmd_merkle_root(args: argparse.Namespace) -> None:
 
 
 def cmd_merkle_proof(args: argparse.Namespace) -> None:
-    index = _load_evidence_index(args.evidence_index)
+    index = _load_evidence_index(args.db)
     if args.evidence_id not in index:
         print(f"Unknown evidence id: {args.evidence_id}")
         sys.exit(1)
-    folder_index = _load_folder_index(args.folder_index)
+    folder_index = _load_folder_index(args.db)
     main_tree, grouped_ids = _build_main_tree(index, folder_index)
 
     rec = index[args.evidence_id]
@@ -351,9 +333,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("add-evidence", help="Register a file (or folder) as evidence")
     p.add_argument("--file", required=True, help="File path, or a folder to register recursively")
     p.add_argument("--evidence-id", required=True, help="Evidence id, or folder/batch id when --file is a directory")
-    p.add_argument("--evidence-index", default=DEFAULT_EVIDENCE_INDEX)
-    p.add_argument("--folder-index", default=DEFAULT_FOLDER_INDEX, help="Used only when --file is a directory")
-    p.add_argument("--log", default=DEFAULT_LOG, help="Folder mode only: log a batch-register custody event here")
+    p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument(
         "--private-key",
         default=None,
@@ -385,7 +365,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override path to check; defaults to the evidence's recorded source_path",
     )
     p.add_argument("--evidence-id", required=True)
-    p.add_argument("--evidence-index", default=DEFAULT_EVIDENCE_INDEX)
+    p.add_argument("--db", default=DEFAULT_DB)
     p.set_defaults(func=cmd_check_evidence)
 
     p = sub.add_parser("verify-chain", help="Verify the custody hash chain")
@@ -394,14 +374,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_verify_chain)
 
     p = sub.add_parser("merkle-root", help="Print the Merkle root over registered evidence")
-    p.add_argument("--evidence-index", default=DEFAULT_EVIDENCE_INDEX)
-    p.add_argument("--folder-index", default=DEFAULT_FOLDER_INDEX)
+    p.add_argument("--db", default=DEFAULT_DB)
     p.set_defaults(func=cmd_merkle_root)
 
     p = sub.add_parser("merkle-proof", help="Generate a Merkle inclusion proof")
     p.add_argument("--evidence-id", required=True)
-    p.add_argument("--evidence-index", default=DEFAULT_EVIDENCE_INDEX)
-    p.add_argument("--folder-index", default=DEFAULT_FOLDER_INDEX)
+    p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--out", default=None)
     p.set_defaults(func=cmd_merkle_proof)
 

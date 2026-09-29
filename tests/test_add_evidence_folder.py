@@ -1,9 +1,8 @@
-"""Folder-mode add-evidence: recursive registration + folder_index.json."""
+"""Folder-mode add-evidence: recursive registration + the folders table."""
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -12,15 +11,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import cli as cli_module
+from vcoc import db
 from vcoc.ecdsa_signer import generate_keypair, save_keypair
 from vcoc.hash_chain import HashChain
 
 
 def _ns(**kwargs) -> argparse.Namespace:
     defaults = dict(
-        evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
-        folder_index=cli_module.DEFAULT_FOLDER_INDEX,
-        log=cli_module.DEFAULT_LOG,
+        db=cli_module.DEFAULT_DB,
         private_key=None,
     )
     defaults.update(kwargs)
@@ -43,7 +41,7 @@ def test_folder_registers_every_file_with_correct_folder_id(tmp_path, monkeypatc
 
     cli_module.cmd_add_evidence(ns)
 
-    index = cli_module._load_evidence_index(ns.evidence_index)
+    index = cli_module._load_evidence_index(ns.db)
     assert len(index) == 3
     for eid, rec in index.items():
         assert eid.startswith("BATCH1/")
@@ -62,7 +60,7 @@ def test_folder_writes_folder_index_with_root_and_members(tmp_path, monkeypatch)
 
     cli_module.cmd_add_evidence(ns)
 
-    folder_index = json.loads(Path(ns.folder_index).read_text(encoding="utf-8"))
+    folder_index = cli_module._load_folder_index(ns.db)
     assert "BATCH1" in folder_index
     assert "root" in folder_index["BATCH1"]
     assert folder_index["BATCH1"]["member_ids"] == [
@@ -75,14 +73,14 @@ def test_folder_writes_folder_index_with_root_and_members(tmp_path, monkeypatch)
 def test_folder_reregistration_is_deterministic(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     folder = _make_folder(tmp_path)
-    ns1 = _ns(file=str(folder), evidence_id="BATCH1", evidence_index="idx1.json", folder_index="fidx1.json")
-    ns2 = _ns(file=str(folder), evidence_id="BATCH1", evidence_index="idx2.json", folder_index="fidx2.json")
+    ns1 = _ns(file=str(folder), evidence_id="BATCH1", db="one.db")
+    ns2 = _ns(file=str(folder), evidence_id="BATCH1", db="two.db")
 
     cli_module.cmd_add_evidence(ns1)
     cli_module.cmd_add_evidence(ns2)
 
-    root1 = json.loads(Path("fidx1.json").read_text(encoding="utf-8"))["BATCH1"]["root"]
-    root2 = json.loads(Path("fidx2.json").read_text(encoding="utf-8"))["BATCH1"]["root"]
+    root1 = cli_module._load_folder_index("one.db")["BATCH1"]["root"]
+    root2 = cli_module._load_folder_index("two.db")["BATCH1"]["root"]
     assert root1 == root2
 
 
@@ -102,7 +100,7 @@ def test_folder_skips_symlinks(tmp_path, monkeypatch):
     ns = _ns(file=str(folder), evidence_id="BATCH1")
     cli_module.cmd_add_evidence(ns)
 
-    index = cli_module._load_evidence_index(ns.evidence_index)
+    index = cli_module._load_evidence_index(ns.db)
     assert "BATCH1/link.txt" not in index
     assert len(index) == 3  # only the 3 real files, symlink skipped
 
@@ -123,10 +121,10 @@ def test_folder_batch_logs_custody_event_when_keys_given(tmp_path, monkeypatch):
     signing_key, verifying_key = generate_keypair()
     save_keypair(signing_key, "private_key.pem", "public_key.pem")
 
-    ns = _ns(file=str(folder), evidence_id="BATCH1", private_key="private_key.pem", log="custody_log.json")
+    ns = _ns(file=str(folder), evidence_id="BATCH1", private_key="private_key.pem")
     cli_module.cmd_add_evidence(ns)
 
-    chain = HashChain.load("custody_log.json")
+    chain = HashChain.load_db(db.connect(ns.db))
     assert len(chain.entries) == 1
     assert chain.entries[0].evidence_id == "BATCH1"
     assert chain.entries[0].action == "batch-register"
@@ -141,7 +139,7 @@ def test_folder_batch_no_event_logged_without_keys(tmp_path, monkeypatch):
 
     cli_module.cmd_add_evidence(ns)  # must not crash
 
-    assert not Path(ns.log).exists()
+    assert HashChain.load_db(db.connect(ns.db)).entries == []
 
 
 def test_single_file_add_evidence_unchanged(tmp_path, monkeypatch):
@@ -153,6 +151,6 @@ def test_single_file_add_evidence_unchanged(tmp_path, monkeypatch):
 
     cli_module.cmd_add_evidence(ns)
 
-    index = cli_module._load_evidence_index(ns.evidence_index)
+    index = cli_module._load_evidence_index(ns.db)
     assert index["EV001"]["folder_id"] is None
-    assert not Path(ns.folder_index).exists()
+    assert cli_module._load_folder_index(ns.db) == {}
