@@ -49,6 +49,7 @@ def _run_cmd(func, namespace: argparse.Namespace) -> str:
 def _defaults() -> argparse.Namespace:
     """A namespace pre-filled with build_parser()'s own defaults."""
     return argparse.Namespace(
+        db=cli_module.DEFAULT_DB,
         evidence_index=cli_module.DEFAULT_EVIDENCE_INDEX,
         folder_index=cli_module.DEFAULT_FOLDER_INDEX,
         log=cli_module.DEFAULT_LOG,

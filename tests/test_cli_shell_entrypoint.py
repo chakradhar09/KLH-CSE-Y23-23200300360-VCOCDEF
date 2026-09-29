@@ -197,13 +197,14 @@ def test_shell_log_event_multi_select_with_keys_present(tmp_path):
     )
     run_with_keys(keys, tmp_path)
 
-    import json
+    from vcoc import db
+    from vcoc.hash_chain import HashChain
 
-    log_path = tmp_path / "custody_log.json"
-    assert log_path.exists()
-    entries = json.loads(log_path.read_text(encoding="utf-8"))
+    db_path = tmp_path / "vcoc.db"
+    assert db_path.exists()
+    entries = HashChain.load_db(db.connect(db_path)).entries
     assert len(entries) == 1
-    assert entries[0]["evidence_ids"] == ["EV001", "EV002"]
+    assert entries[0].evidence_ids == ["EV001", "EV002"]
 
 
 def test_shell_verification_screen_after_add_evidence(tmp_path):

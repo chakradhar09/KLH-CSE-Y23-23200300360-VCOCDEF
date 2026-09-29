@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
+from vcoc import db
 from vcoc.ecdsa_signer import generate_keypair, load_signing_key, save_keypair
 from vcoc.hash_chain import HashChain, utc_now_iso
 from vcoc.hashing import hash_file
@@ -27,6 +28,7 @@ from vcoc.merkle import MerkleTree, build_nested_proof, nested_proof_to_dict, pr
 from vcoc.models import Evidence
 from vcoc.visualize import build_chain_view, build_tree_view, format_entry_detail_lines
 
+DEFAULT_DB = "vcoc.db"
 DEFAULT_LOG = "custody_log.json"
 DEFAULT_EVIDENCE_INDEX = "evidence_index.json"
 DEFAULT_FOLDER_INDEX = "folder_index.json"
@@ -167,7 +169,8 @@ def _add_evidence_folder(args: argparse.Namespace) -> None:
 
 def cmd_log_event(args: argparse.Namespace) -> None:
     signing_key = load_signing_key(args.private_key)
-    chain = HashChain.load(args.log) if Path(args.log).exists() else HashChain()
+    conn = db.connect(args.db)
+    chain = HashChain.load_db(conn)
     evidence_ids = args.evidence_id
     if len(evidence_ids) == 1:
         entry = chain.add_event(
@@ -188,7 +191,7 @@ def cmd_log_event(args: argparse.Namespace) -> None:
             notes=getattr(args, "notes", None),
         )
         described = ",".join(entry.evidence_ids)
-    chain.save(args.log)
+    chain.save_db(conn)
     print(f"Logged event #{entry.index}: {entry.action} on {described} by {entry.actor}")
     print(f"entry_hash={entry.entry_hash}")
 
@@ -221,7 +224,10 @@ def cmd_check_evidence(args: argparse.Namespace) -> None:
 def cmd_verify_chain(args: argparse.Namespace) -> None:
     from vcoc.ecdsa_signer import load_verifying_key
 
-    chain = HashChain.load(args.log)
+    if not Path(args.db).exists():
+        print(f"No custody log found: {args.db} does not exist.")
+        sys.exit(1)
+    chain = HashChain.load_db(db.connect(args.db))
     verifying_key = load_verifying_key(args.public_key)
     ok, break_index, reason = chain.verify(verifying_key)
     if ok:
@@ -240,6 +246,20 @@ def cmd_verify_chain(args: argparse.Namespace) -> None:
 
     if not ok:
         sys.exit(1)
+
+
+def cmd_export(args: argparse.Namespace) -> None:
+    """Regenerate the JSON files verifier.py reads (custody_log/evidence_index/folder_index)."""
+    if not Path(args.db).exists():
+        print(f"Nothing to export: {args.db} does not exist.")
+        sys.exit(1)
+    conn = db.connect(args.db)
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "custody_log.json").write_text(HashChain.load_db(conn).to_json(), encoding="utf-8")
+    (out_dir / "evidence_index.json").write_text(json.dumps(db.load_evidence_index(conn), indent=2), encoding="utf-8")
+    (out_dir / "folder_index.json").write_text(json.dumps(db.load_folder_index(conn), indent=2), encoding="utf-8")
+    print(f"Exported custody_log.json, evidence_index.json, folder_index.json -> {out_dir}")
 
 
 def _build_main_tree(evidence_index: dict, folder_index: dict) -> tuple[MerkleTree, list[str]]:
@@ -351,7 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--actor", required=True)
     p.add_argument("--action", required=True)
-    p.add_argument("--log", default=DEFAULT_LOG)
+    p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--private-key", default=DEFAULT_PRIVATE_KEY)
     p.add_argument("--case-number", default=None, help="Multi-evidence events only")
     p.add_argument("--tag", default=None, help="Multi-evidence events only")
@@ -369,7 +389,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_check_evidence)
 
     p = sub.add_parser("verify-chain", help="Verify the custody hash chain")
-    p.add_argument("--log", default=DEFAULT_LOG)
+    p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--public-key", default=DEFAULT_PUBLIC_KEY)
     p.set_defaults(func=cmd_verify_chain)
 
@@ -384,6 +404,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--folder-index", default=DEFAULT_FOLDER_INDEX)
     p.add_argument("--out", default=None)
     p.set_defaults(func=cmd_merkle_proof)
+
+    p = sub.add_parser("export", help="Export the DB to the JSON files verifier.py reads")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--out-dir", default=".")
+    p.set_defaults(func=cmd_export)
 
     p = sub.add_parser("shell", help="Launch the interactive shell")
     p.set_defaults(func=cmd_shell)

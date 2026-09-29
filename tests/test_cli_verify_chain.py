@@ -11,13 +11,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import contextlib
 
 import cli as cli_module
+from vcoc import db
 from vcoc.ecdsa_signer import generate_keypair, save_keypair
 from vcoc.hash_chain import HashChain
 
 
 def _run_verify_chain(tmp_path, expect_exit: bool = False) -> str:
     args = cli_module.build_parser().parse_args(
-        ["verify-chain", "--log", str(tmp_path / "log.json"), "--public-key", str(tmp_path / "pub.pem")]
+        ["verify-chain", "--db", str(tmp_path / "vcoc.db"), "--public-key", str(tmp_path / "pub.pem")]
     )
     buf = StringIO()
     with contextlib.redirect_stdout(buf):
@@ -40,7 +41,7 @@ def test_verify_chain_lists_each_entry_single_evidence(tmp_path):
     chain = HashChain()
     chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
     chain.add_event(evidence_id="EV001", actor="A. Smith", action="reviewed", signing_key=signing_key)
-    chain.save(tmp_path / "log.json")
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     output = _run_verify_chain(tmp_path)
 
@@ -67,7 +68,7 @@ def test_verify_chain_lists_multi_evidence_entry_with_case_tag(tmp_path):
         case_number="C-001",
         tag="disk+memory",
     )
-    chain.save(tmp_path / "log.json")
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     output = _run_verify_chain(tmp_path)
 
@@ -86,7 +87,7 @@ def test_verify_chain_shows_both_hashes_signature_and_per_entry_status_clean(tmp
     chain = HashChain()
     e0 = chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
     e1 = chain.add_event(evidence_id="EV002", actor="J. Doe", action="reviewed", signing_key=signing_key)
-    chain.save(tmp_path / "log.json")
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     output = _run_verify_chain(tmp_path)
 
@@ -108,7 +109,7 @@ def test_verify_chain_shows_per_entry_tamper_status_for_broken_entry(tmp_path):
     chain.add_event(evidence_id="EV001", actor="J. Doe", action="collected", signing_key=signing_key)
     chain.add_event(evidence_id="EV002", actor="J. Doe", action="reviewed", signing_key=signing_key)
     chain.entries[1].actor = "Mallory"
-    chain.save(tmp_path / "log.json")
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
 
     output = _run_verify_chain(tmp_path, expect_exit=True)
 

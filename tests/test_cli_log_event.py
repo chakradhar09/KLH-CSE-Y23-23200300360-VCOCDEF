@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import cli as cli_module
+from vcoc import db
+from vcoc.hash_chain import HashChain
 from vcoc.ecdsa_signer import generate_keypair, save_keypair
 
 
@@ -21,7 +22,7 @@ def _make_keys(tmp_path):
 
 def test_log_event_single_evidence_id_unchanged(tmp_path):
     priv, _ = _make_keys(tmp_path)
-    log_path = tmp_path / "log.json"
+    db_path = tmp_path / "vcoc.db"
     args = cli_module.build_parser().parse_args(
         [
             "log-event",
@@ -31,15 +32,15 @@ def test_log_event_single_evidence_id_unchanged(tmp_path):
             "J. Doe",
             "--action",
             "collected",
-            "--log",
-            str(log_path),
+            "--db",
+            str(db_path),
             "--private-key",
             str(priv),
         ]
     )
     cli_module.cmd_log_event(args)
 
-    entries = json.loads(log_path.read_text(encoding="utf-8"))
+    entries = [e.to_dict() for e in HashChain.load_db(db.connect(db_path)).entries]
     assert len(entries) == 1
     assert entries[0]["evidence_id"] == "EV001"
     assert "evidence_ids" not in entries[0]
@@ -47,7 +48,7 @@ def test_log_event_single_evidence_id_unchanged(tmp_path):
 
 def test_log_event_repeated_evidence_id_produces_one_multi_evidence_entry(tmp_path):
     priv, _ = _make_keys(tmp_path)
-    log_path = tmp_path / "log.json"
+    db_path = tmp_path / "vcoc.db"
     args = cli_module.build_parser().parse_args(
         [
             "log-event",
@@ -59,8 +60,8 @@ def test_log_event_repeated_evidence_id_produces_one_multi_evidence_entry(tmp_pa
             "J. Doe",
             "--action",
             "seized",
-            "--log",
-            str(log_path),
+            "--db",
+            str(db_path),
             "--private-key",
             str(priv),
             "--case-number",
@@ -71,7 +72,7 @@ def test_log_event_repeated_evidence_id_produces_one_multi_evidence_entry(tmp_pa
     )
     cli_module.cmd_log_event(args)
 
-    entries = json.loads(log_path.read_text(encoding="utf-8"))
+    entries = [e.to_dict() for e in HashChain.load_db(db.connect(db_path)).entries]
     assert len(entries) == 1
     assert entries[0]["evidence_ids"] == ["EV001", "EV002"]
     assert entries[0]["case_number"] == "C-001"
