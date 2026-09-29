@@ -35,18 +35,19 @@ def canonical_payload(entry: dict) -> str:
                 entry["prev_hash"],
             ]
         )
-    return "|".join(
-        [
-            str(entry["index"]),
-            ",".join(evidence_ids),
-            entry["actor"],
-            entry["action"],
-            entry["timestamp"],
-            entry["prev_hash"],
-            entry.get("case_number") or "",
-            entry.get("tag") or "",
-            entry.get("notes") or "",
-        ]
+    return json.dumps(
+        {
+            "index": entry["index"],
+            "evidence_ids": evidence_ids,
+            "actor": entry["actor"],
+            "action": entry["action"],
+            "timestamp": entry["timestamp"],
+            "prev_hash": entry["prev_hash"],
+            "case_number": entry.get("case_number") or "",
+            "tag": entry.get("tag") or "",
+            "notes": entry.get("notes") or "",
+        },
+        sort_keys=True,
     )
 
 

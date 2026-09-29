@@ -155,3 +155,33 @@ def test_new_shape_to_dict_from_dict_round_trip():
     reloaded = CustodyEvent.from_dict(data)
     assert reloaded.evidence_ids == ["EV001", "EV002"]
     assert reloaded.canonical_payload() == event.canonical_payload()
+
+
+def test_new_shape_payload_does_not_collide_across_field_boundaries():
+    """A naive '|'/','-joined payload lets a '|' inside actor/action/tag/notes
+    shift field boundaries so two different logical entries hash identically.
+    This must never happen -- it breaks non-repudiation for new-shape entries.
+    """
+    entry_a = CustodyEvent(
+        index=0,
+        evidence_id="",
+        evidence_ids=["EV001"],
+        actor="J|Doe",
+        action="seized",
+        timestamp="2026-09-22T00:00:00+00:00",
+        prev_hash="0" * 64,
+        tag="x|y",
+        notes="a,b|c",
+    )
+    entry_b = CustodyEvent(
+        index=0,
+        evidence_id="",
+        evidence_ids=["EV001"],
+        actor="J",
+        action="Doe|seized",
+        timestamp="2026-09-22T00:00:00+00:00",
+        prev_hash="0" * 64,
+        tag="x",
+        notes="y|a,b|c",
+    )
+    assert entry_a.canonical_payload() != entry_b.canonical_payload()

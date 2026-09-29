@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 
@@ -44,18 +45,19 @@ class CustodyEvent:
                     self.prev_hash,
                 ]
             )
-        return "|".join(
-            [
-                str(self.index),
-                ",".join(self.evidence_ids),
-                self.actor,
-                self.action,
-                self.timestamp,
-                self.prev_hash,
-                self.case_number or "",
-                self.tag or "",
-                self.notes or "",
-            ]
+        return json.dumps(
+            {
+                "index": self.index,
+                "evidence_ids": self.evidence_ids,
+                "actor": self.actor,
+                "action": self.action,
+                "timestamp": self.timestamp,
+                "prev_hash": self.prev_hash,
+                "case_number": self.case_number or "",
+                "tag": self.tag or "",
+                "notes": self.notes or "",
+            },
+            sort_keys=True,
         )
 
     def to_dict(self) -> dict:
