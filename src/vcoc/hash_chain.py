@@ -41,6 +41,7 @@ class HashChain:
 
     def __init__(self, entries: list[CustodyEvent] | None = None):
         self.entries: list[CustodyEvent] = entries or []
+        self._persisted = 0  # entries already in the DB; only meaningful with load_db/save_db
 
     @property
     def last_hash(self) -> str:
@@ -164,3 +165,18 @@ class HashChain:
     def load(path: str | Path) -> "HashChain":
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         return HashChain([CustodyEvent.from_dict(d) for d in raw])
+
+    @staticmethod
+    def load_db(conn) -> "HashChain":
+        from . import db
+
+        chain = HashChain(db.load_events(conn))
+        chain._persisted = len(chain.entries)
+        return chain
+
+    def save_db(self, conn) -> None:
+        """Append entries added since load_db(). Raises IntegrityError if the stored chain moved on."""
+        from . import db
+
+        db.insert_events(conn, self.entries[self._persisted :])
+        self._persisted = len(self.entries)
