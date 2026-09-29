@@ -108,3 +108,20 @@ def test_put_evidence_overwrites_same_id(tmp_path):
     db.put_evidence(conn, Evidence("EV1", "a", "11" * 32, 1, "t"))
     db.put_evidence(conn, Evidence("EV1", "a", "22" * 32, 2, "t"))
     assert db.load_evidence_index(conn)["EV1"]["sha256"] == "22" * 32
+
+
+def test_custody_log_rejects_update_and_delete(tmp_path):
+    signing_key, _ = generate_keypair()
+    conn = db.connect(tmp_path / "vcoc.db")
+    chain = HashChain()
+    chain.add_event(evidence_id="EV001", actor="a", action="x", signing_key=signing_key)
+    chain.save_db(conn)
+
+    with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+        conn.execute("UPDATE custody_log SET actor = 'Mallory' WHERE idx = 0")
+    with pytest.raises(sqlite3.DatabaseError, match="append-only"):
+        conn.execute("DELETE FROM custody_log WHERE idx = 0")
+
+    chain.add_event(evidence_id="EV002", actor="a", action="y", signing_key=signing_key)
+    chain.save_db(conn)
+    assert len(HashChain.load_db(conn).entries) == 2

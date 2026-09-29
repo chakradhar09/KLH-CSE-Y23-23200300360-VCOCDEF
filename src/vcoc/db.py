@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS custody_log (
     signature    TEXT NOT NULL
 );
 
+CREATE TRIGGER IF NOT EXISTS custody_log_no_update BEFORE UPDATE ON custody_log
+BEGIN SELECT RAISE(ABORT, 'custody_log is append-only'); END;
+
+CREATE TRIGGER IF NOT EXISTS custody_log_no_delete BEFORE DELETE ON custody_log
+BEGIN SELECT RAISE(ABORT, 'custody_log is append-only'); END;
+
 CREATE TABLE IF NOT EXISTS evidence (
     evidence_id       TEXT PRIMARY KEY,
     original_filename TEXT NOT NULL,
