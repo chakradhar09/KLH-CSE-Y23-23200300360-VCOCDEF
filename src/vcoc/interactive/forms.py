@@ -85,7 +85,7 @@ def prompt_path(title: str, label: str, default: str = "", dirs_only: bool = Fal
     submits the typed text as-is -- manual/absolute paths always work even
     with no filesystem match.
     # ponytail: glob-per-keystroke against the literal parent dir, same
-    # approach as store_bridge's in-memory filter -- no fuzzy matching, no
+    # approach as evidence_search's in-memory filter -- no fuzzy matching, no
     # recursive walk; add fuzzy ranking only if flat prefix listing proves
     # annoying in practice.
     """

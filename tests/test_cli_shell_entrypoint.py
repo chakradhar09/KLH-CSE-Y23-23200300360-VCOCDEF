@@ -145,7 +145,7 @@ def test_shell_log_event_no_keys_cancels_cleanly(tmp_path):
     Task 18 -- Ctrl-C at the key-path prompt cancels without crashing or
     reaching the (now multi-select) evidence picker."""
     run_with_keys("3" + "\x03" + "q", tmp_path)
-    assert not (tmp_path / "custody_log.json").exists()
+    assert not (tmp_path / "vcoc.db").exists()
 
 
 def test_shell_log_event_multi_select_with_keys_present(tmp_path):

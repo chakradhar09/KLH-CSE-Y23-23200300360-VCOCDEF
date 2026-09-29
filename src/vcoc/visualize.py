@@ -2,7 +2,7 @@
 Verification screen.
 
 Takes already-loaded evidence_index/folder_index/custody_log data (no file
-I/O here -- callers load and pass in, same separation store_bridge.py uses)
+I/O here -- callers load and pass in, same separation db.py keeps)
 and returns plain, normalized dict/list/text structures both display
 surfaces render from, so they never drift apart.
 """
