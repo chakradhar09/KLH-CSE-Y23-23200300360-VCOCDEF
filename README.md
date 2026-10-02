@@ -100,6 +100,17 @@ python verifier.py --log out/custody_log.json --public-key public_key.pem \
   --evidence-index out/evidence_index.json --folder-index out/folder_index.json
 ```
 
+`export` also writes `anchor.json` and prints it: the custody-log head hash and the Merkle root. Keep a copy somewhere
+outside the database (a ticket, an email, a printout). The store is tamper-evident, not tamper-proof: if someone later
+rewrites it or cuts the log short, it no longer matches the copy you kept. To check, add `--anchor anchor.json` (the
+copy you kept) to the `verifier.py` command: it fails if the log was cut short or rewritten, and, together with
+`--evidence-index`, if the Merkle root changed. A log that only grew since the anchor still passes.
+
+**Many files, spare cores:** hashing is single-process by default (best on a basic machine). For a big folder on a
+multi-core machine with fast storage, `python cli.py add-evidence --file <folder> --evidence-id B1 --jobs 8` and
+`python verifier.py ... --jobs 8` hash in worker processes (or set `VCOC_HASH_JOBS=8`). Results are identical; on a
+416,000-file / 16.5 GB folder (warm cache, 32 CPUs) ingest went from 240 s to 40 s. It only starts above 2,000 files.
+
 Everything below explains what each menu option / underlying module actually does.
 
 ## What the Sections and Functions Do

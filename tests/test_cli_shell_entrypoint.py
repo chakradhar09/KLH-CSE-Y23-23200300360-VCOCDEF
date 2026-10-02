@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -32,6 +33,10 @@ def run_with_keys(keys: str, cwd: Path) -> None:
             with create_app_session(input=pipe_input, output=DummyOutput()):
                 run_shell()
     finally:
+        # A cancelled Evidence-tab load may still be winding down; let it finish before the cwd moves (Task 1e).
+        for t in threading.enumerate():
+            if t.name == "vcoc-bgload":
+                t.join(5)
         os.chdir(old_cwd)
 
 
@@ -117,7 +122,11 @@ def test_shell_verification_screen_empty_state(tmp_path):
     run_with_keys(keys, tmp_path)
 
 
-def test_shell_add_evidence_folder_registers_all_members(tmp_path):
+def test_shell_add_evidence_folder_registers_all_members(tmp_path, monkeypatch):
+    # The ingest screen listens for Esc (cancel), which also swallows type-ahead; this test types ahead, so run it
+    # without the cancel hook (the cancel path has its own tests in test_interactive_loading.py).
+    real = menu.run_with_loading
+    monkeypatch.setattr(menu, "run_with_loading", lambda *a, cancel=None, **k: real(*a, **k))
     folder = tmp_path / "batchdir"
     folder.mkdir()
     (folder / "a.txt").write_text("aaa", encoding="utf-8")

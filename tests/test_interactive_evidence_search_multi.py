@@ -43,3 +43,46 @@ def test_enter_with_nothing_toggled_returns_just_highlighted_row():
 def test_escape_cancels_and_returns_none():
     result = run_multi_select("\x1b")
     assert result is None
+
+
+# --- Task 6: multi-select renders only the visible window and supports PgUp/PgDn/Home/End -----------
+
+PGDN, PGUP, HOME, END, ENTER = "\x1b[6~", "\x1b[5~", "\x1b[H", "\x1b[F", "\r"
+
+
+def _big_index(n: int) -> dict:
+    return {f"EV{i:05d}": {"original_filename": f"file{i}.bin", "sha256": f"{i:064x}"} for i in range(n)}
+
+
+def _run_multi(index: dict, keys: str):
+    with create_pipe_input() as pipe_input:
+        pipe_input.send_text(keys)
+        with create_app_session(input=pipe_input, output=DummyOutput()):
+            return evidence_search.search_evidence_multi(index)
+
+
+def _height() -> int:
+    with create_pipe_input() as pipe_input, create_app_session(input=pipe_input, output=DummyOutput()):
+        return evidence_search._visible_height()
+
+
+def test_multi_renders_only_a_window_of_a_20k_list(monkeypatch):
+    calls = []
+    real = evidence_search._format_result_multi
+    monkeypatch.setattr(evidence_search, "_format_result_multi", lambda e, s, c: calls.append(1) or real(e, s, c))
+
+    result = _run_multi(_big_index(20_000), "\x1b[B" + " " + ENTER)
+
+    assert result == ["EV00001"]
+    assert len(calls) <= 50 * (_height() + 1)
+
+
+def test_multi_toggle_after_paging_checks_the_true_records():
+    h = _height()
+    # PgDn, toggle, End, toggle, Enter -> both records checked far apart, returned in list order
+    assert _run_multi(_big_index(500), PGDN + " " + END + " " + ENTER) == [f"EV{h:05d}", "EV00499"]
+
+
+def test_multi_home_end_pageup_navigation():
+    h = _height()
+    assert _run_multi(_big_index(500), END + PGUP + " " + HOME + " " + ENTER) == ["EV00000", f"EV{499 - h:05d}"]

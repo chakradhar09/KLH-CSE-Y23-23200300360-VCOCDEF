@@ -4,13 +4,18 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import os
+import re
+import time
 from pathlib import Path
 
 import cli as cli_module
+import verifier as verifier_module
 
 from . import config as config_module
 from . import forms
-from .evidence_search import search_evidence, search_evidence_multi
+from .evidence_search import search_evidence_db, search_evidence_multi_db
+from .loading import run_with_loading
 from .verification_screen import run_verification_screen, run_verify_chain_screen
 
 MENU_ITEMS = [
@@ -24,6 +29,85 @@ MENU_ITEMS = [
     "Verification (chain / evidence / merkle)",
     "Quit",
 ]
+
+
+def _fmt_duration(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    whole = int(seconds)
+    minutes, secs = divmod(whole, 60)
+    if minutes < 60:
+        return f"{minutes} min {secs:02d} s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes:02d} min {secs:02d} s"
+
+
+class IngestCancelled(Exception):
+    """Raised from the progress hook after Esc: the ingest stops and nothing it hashed is recorded."""
+
+
+class _IngestProgress:
+    """The `progress` hook of a folder add-evidence, plus the live text the loading screen shows for it.
+
+    The ingest thread only stores the latest numbers (one tuple assignment); the screen builds the text when it redraws.
+    """
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._first: float | None = None
+        self._last: tuple | None = None
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    def __call__(self, i, n, rel, size, done, total) -> None:
+        if self.cancelled:
+            raise IngestCancelled("Cancelled: nothing was recorded.")
+        if self._first is None:
+            self._first = self._clock()
+        self._last = (i, n, rel, size, done, total)
+
+    @property
+    def files(self) -> int:
+        return self._last[1] if self._last else 0
+
+    @property
+    def hashed_bytes(self) -> int:
+        return self._last[4] if self._last else 0
+
+    def text(self) -> str:
+        last = self._last
+        if last is None:
+            return "Scanning the folder..."
+        i, n, rel, size, done, total = last
+        fmt = verifier_module._fmt_bytes
+        if i == n and done >= total:  # every file is hashed: what is left is writing the rows
+            return f"All {n:,} file(s) hashed ({fmt(total)}).\nRecording to the database..."
+        elapsed = max(self._clock() - self._first, 1e-9)
+        rate = done / elapsed
+        pct = 100 * done // total if total else 100
+        line = f"{fmt(done)} of {fmt(total)} ({pct}%)"
+        if done:
+            line += f"   {fmt(rate)}/s"
+            if rate:
+                line += f"   about {_fmt_duration((total - done) / rate)} left"
+        shown = rel if len(rel) <= 70 else "..." + rel[-67:]
+        return f"Hashing file {i:,} of {n:,}\n  {shown} ({fmt(size)})\n{line}"
+
+
+def _ingest_summary(output: str, progress: _IngestProgress, elapsed: float, logged_event: bool) -> str:
+    """The closing block of a folder add-evidence: how many files were recorded, how long it took, custody event."""
+    match = re.search(r"Registered folder .*?: (\d+) file\(s\)", output)
+    recorded = int(match.group(1)) if match else progress.files
+    fmt = verifier_module._fmt_bytes
+    speed = f"{recorded / elapsed:,.0f} files/s, {fmt(progress.hashed_bytes / elapsed)}/s" if elapsed > 0 else ""
+    return (
+        "\n\nSummary\n"
+        f"  Files recorded : {recorded:,} ({fmt(progress.hashed_bytes)})\n"
+        f"  Total time     : {_fmt_duration(elapsed)}  ({speed})\n"
+        f"  Custody event  : {'logged (batch-register)' if logged_event else 'NOT logged (you chose not to log one)'}"
+    )
 
 
 def _run_cmd(func, namespace: argparse.Namespace) -> str:
@@ -46,9 +130,14 @@ def _defaults() -> argparse.Namespace:
     )
 
 
+def _run_cmd_loading(title: str, label: str, func, namespace: argparse.Namespace, status=None, cancel=None) -> str:
+    """_run_cmd behind a loading screen, so slow commands never run with the plain terminal on display."""
+    return run_with_loading(title, lambda: _run_cmd(func, namespace), label, status=status, cancel=cancel)
+
+
 def _pick_evidence_id() -> str | None:
-    index = cli_module._load_evidence_index(cli_module.DEFAULT_DB)
-    return search_evidence(index)
+    # The search screens read the table a page at a time (no index load), so there is nothing slow to hide any more.
+    return search_evidence_db(os.path.abspath(cli_module.DEFAULT_DB))
 
 
 def ensure_keys(shell_config: dict, config_path: str = config_module.DEFAULT_CONFIG_PATH) -> bool:
@@ -98,7 +187,7 @@ def action_add_evidence(shell_config: dict) -> None:
     ns.actor = None
     ns.private_key = None
 
-    if is_folder and forms.confirm(f"Log a batch-register custody event for {evidence_id}?"):
+    if is_folder and forms.confirm(f"Log a batch-register custody event for {evidence_id}?", default=True):
         if not ensure_keys(shell_config):
             return
         ns.private_key = shell_config["private_key"]
@@ -107,7 +196,22 @@ def action_add_evidence(shell_config: dict) -> None:
             return
         ns.actor = actor
 
-    output = _run_cmd(cli_module.cmd_add_evidence, ns)
+    progress = _IngestProgress() if is_folder else None
+    if progress is not None:
+        ns.progress = progress  # live status on the loading screen; also stops the per-file lines flooding the output
+    started = time.monotonic()
+    output = _run_cmd_loading(
+        "Add evidence",
+        "Hashing and registering the evidence...",
+        cli_module.cmd_add_evidence,
+        ns,
+        status=progress.text if progress is not None else None,
+        cancel=progress.cancel if progress is not None else None,
+    )
+    if progress is not None and progress.cancelled:
+        output = "Cancelled: nothing was recorded."
+    elif progress is not None and "Registered folder" in output:
+        output += _ingest_summary(output, progress, time.monotonic() - started, ns.private_key is not None)
 
     forms.show_output("Add evidence", output)
 
@@ -119,15 +223,16 @@ def action_check_evidence(shell_config: dict) -> None:
     ns = _defaults()
     ns.file = None
     ns.evidence_id = evidence_id
-    output = _run_cmd(cli_module.cmd_check_evidence, ns)
+    output = _run_cmd_loading(
+        "Check evidence integrity", "Re-hashing the file and comparing...", cli_module.cmd_check_evidence, ns
+    )
     forms.show_output("Check evidence integrity", output)
 
 
 def action_log_event(shell_config: dict) -> None:
     if not ensure_keys(shell_config):
         return
-    index = cli_module._load_evidence_index(cli_module.DEFAULT_DB)
-    evidence_ids = search_evidence_multi(index)
+    evidence_ids = search_evidence_multi_db(os.path.abspath(cli_module.DEFAULT_DB))
     if evidence_ids is None:
         return
     actor = forms.prompt_text("Log custody event", "Actor:")
@@ -157,7 +262,7 @@ def action_log_event(shell_config: dict) -> None:
         ns.case_number = case_number or None
         ns.tag = tag or None
         ns.notes = notes or None
-    output = _run_cmd(cli_module.cmd_log_event, ns)
+    output = _run_cmd_loading("Log custody event", "Signing and logging the event...", cli_module.cmd_log_event, ns)
     forms.show_output("Log custody event", output)
 
 
@@ -168,7 +273,7 @@ def action_verify_chain(shell_config: dict) -> None:
 
 
 def action_merkle_root(shell_config: dict) -> None:
-    output = _run_cmd(cli_module.cmd_merkle_root, _defaults())
+    output = _run_cmd_loading("Merkle root", "Computing the Merkle root...", cli_module.cmd_merkle_root, _defaults())
     forms.show_output("Merkle root", output)
 
 
@@ -182,7 +287,7 @@ def action_merkle_proof(shell_config: dict) -> None:
     ns = _defaults()
     ns.evidence_id = evidence_id
     ns.out = out_path or None
-    output = _run_cmd(cli_module.cmd_merkle_proof, ns)
+    output = _run_cmd_loading("Merkle proof", "Building the Merkle proof...", cli_module.cmd_merkle_proof, ns)
     forms.show_output("Merkle proof", output)
 
 

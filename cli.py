@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -11,10 +14,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 from vcoc import db
 from vcoc.ecdsa_signer import generate_keypair, load_signing_key, save_keypair
 from vcoc.hash_chain import HashChain, utc_now_iso
+from vcoc import hashing
 from vcoc.hashing import hash_file
-from vcoc.merkle import MerkleTree, build_nested_proof, nested_proof_to_dict, proof_to_dict
+from vcoc.merkle import MerkleRootBuilder, MerkleTree, NestedProof, merkle_proof_stream, nested_proof_to_dict
 from vcoc.models import Evidence
-from vcoc.visualize import build_chain_view, build_tree_view, format_entry_detail_lines
+from vcoc.visualize import build_chain_view, format_entry_detail_lines
 
 DEFAULT_DB = "vcoc.db"
 DEFAULT_PRIVATE_KEY = "private_key.pem"
@@ -31,13 +35,15 @@ def cmd_init_keys(args: argparse.Namespace) -> None:
 def _load_evidence_index(db_path: str) -> dict:
     if not Path(db_path).exists():
         return {}
-    return db.load_evidence_index(db.connect(db_path))
+    with contextlib.closing(db.connect(db_path)) as conn:
+        return db.load_evidence_index(conn)
 
 
 def _load_folder_index(db_path: str) -> dict:
     if not Path(db_path).exists():
         return {}
-    return db.load_folder_index(db.connect(db_path))
+    with contextlib.closing(db.connect(db_path)) as conn:
+        return db.load_folder_index(conn)
 
 
 def cmd_add_evidence(args: argparse.Namespace) -> None:
@@ -59,87 +65,201 @@ def _add_evidence_file(args: argparse.Namespace, folder_id: str | None = None) -
         source_path=str(Path(args.file).resolve()),
         folder_id=folder_id,
     )
-    db.put_evidence(db.connect(args.db), evidence)
+    with contextlib.closing(db.connect(args.db)) as conn:
+        db.put_evidence(conn, evidence)
     print(f"Registered evidence {evidence.evidence_id}: sha256={digest}")
     return evidence
+
+
+def _is_reparse_point(entry: os.DirEntry) -> bool:
+    # Windows junctions / mount points are not symlinks but make Path.resolve() leave the tree.
+    # ponytail: any reparse point (OneDrive placeholders too) just costs a per-file resolve(), never a wrong path.
+    return sys.platform == "win32" and getattr(entry.stat(follow_symlinks=False), "st_reparse_tag", 0) != 0
+
+
+WALK_BATCH_SIZE = 5000
+
+
+def _walk_folder(root: Path) -> tuple[sqlite3.Connection, int, int, int, set[str]]:
+    """One os.scandir pass: (walk, count, total_size, skipped, unplain).
+
+    `walk` is a private temporary database (on disk, deleted when closed; the caller closes it) holding table
+    walk(rel PRIMARY KEY, size): the sort by rel_posix is done by SQLite, so memory does not grow with the file count
+    (the sorted Python list cost ~0.4 KB per file: 279 MiB at 416,000 files). Read it back with `_iter_walk`.
+
+    Same selection as the old rglob walk: symlinked directories are neither entered nor counted, other symlinks and
+    non-regular files count as skipped, junctions are entered. `unplain` holds the directory prefixes ("a/b/") and
+    file paths of everything that is a junction/reparse point: a file under one of them may not resolve to
+    root.resolve() + its relative path. Only these small tuples are kept per file (no absolute path, name or flag).
+    """
+    walk = sqlite3.connect("")  # "" = a private temp database; SQLite spills it to disk, only a small cache stays in RAM
+    walk.execute("CREATE TABLE walk(rel TEXT PRIMARY KEY, size INTEGER) WITHOUT ROWID")
+    found: list[tuple[str, int | None]] = []
+    count = total_size = skipped = 0
+    unplain: set[str] = set()
+    stack = [(str(root), "")]
+    while stack:
+        directory, prefix = stack.pop()
+        try:
+            it = os.scandir(directory)
+        except PermissionError:
+            continue
+        with it:
+            for entry in it:
+                if entry.is_dir():
+                    if not entry.is_symlink():
+                        stack.append((entry.path, f"{prefix}{entry.name}/"))
+                        if _is_reparse_point(entry):
+                            unplain.add(f"{prefix}{entry.name}/")
+                    continue
+                if entry.is_symlink() or not entry.is_file():
+                    skipped += 1
+                    continue
+                try:
+                    size = entry.stat().st_size
+                except OSError:
+                    size = None  # surfaces below as a per-file "skipped (...)" like any unreadable file
+                found.append((f"{prefix}{entry.name}", size))
+                count += 1
+                total_size += size or 0
+                if _is_reparse_point(entry):
+                    unplain.add(f"{prefix}{entry.name}")
+                if len(found) >= WALK_BATCH_SIZE:
+                    walk.executemany("INSERT INTO walk VALUES (?, ?)", found)
+                    found = []
+    walk.executemany("INSERT INTO walk VALUES (?, ?)", found)
+    return walk, count, total_size, skipped, unplain
+
+
+def _iter_walk(walk: sqlite3.Connection):
+    """(rel_posix, size or None) in rel_posix order. BINARY collation on UTF-8 equals Python's code point order."""
+    return walk.execute("SELECT rel, size FROM walk ORDER BY rel")
+
+
+INGEST_BATCH_SIZE = 1000
 
 
 def _add_evidence_folder(args: argparse.Namespace) -> None:
     folder_path = Path(args.file)
     folder_id = args.evidence_id
 
-    all_entries = sorted(
-        (p for p in folder_path.rglob("*") if not p.is_dir()),
-        key=lambda p: p.relative_to(folder_path).as_posix(),
-    )
-    files: list[Path] = []
-    skipped = 0
-    for entry in all_entries:
-        if entry.is_symlink() or not entry.is_file():
-            skipped += 1
-            continue
-        files.append(entry)
+    walk, file_count, total_size, skipped, unplain = _walk_folder(folder_path)
+    try:
+        _ingest_walked_folder(args, folder_id, folder_path, walk, file_count, total_size, skipped, unplain)
+    finally:
+        walk.close()
 
-    if not files:
+
+def _ingest_walked_folder(args, folder_id, folder_path, walk, file_count, total_size, skipped, unplain) -> None:
+    root_resolved = folder_path.resolve()
+
+    if not file_count:
         print(f"No files found under {folder_path} (skipped {skipped} symlink/special entries).")
         sys.exit(1)
 
-    total_size = sum(f.stat().st_size for f in files)
-    print(f"Found {len(files)} file(s) ({total_size} bytes) under {folder_path}")
+    # Optional hook, read like `actor`: progress(i, n, rel, size, done_bytes, total_bytes), at each file start and after
+    # every chunk; done_bytes counts the whole folder. With a hook there are no per-file lines on stdout (the hook is the
+    # progress channel). A hook that raises aborts the ingest and nothing is committed: the rows written so far sit in ONE
+    # open transaction (do not raise an OSError from the hook: it would be taken for an unreadable file and skipped).
+    progress = getattr(args, "progress", None)
+    base = 0
+    print(f"Found {file_count} file(s) ({total_size} bytes) under {folder_path}")
     if skipped:
         print(f"Skipped {skipped} symlink/special entries.")
 
-    members: list[Evidence] = []
-    member_ids: list[str] = []
-    leaves: list[str] = []
-    for i, f in enumerate(files, 1):
-        rel = f.relative_to(folder_path).as_posix()
-        print(f"[{i}/{len(files)}] hashing {rel}")
-        try:
-            digest = hash_file(f)
-            size_bytes = f.stat().st_size
-        except OSError as exc:
-            print(f"  skipped ({exc})")
-            continue
-        evidence_id = f"{folder_id}/{rel}"
-        evidence = Evidence(
-            evidence_id=evidence_id,
-            original_filename=f.name,
-            sha256=digest,
-            size_bytes=size_bytes,
-            added_at=utc_now_iso(),
-            source_path=str(f.resolve()),
-            folder_id=folder_id,
+    # Streaming: one batch of Evidence, an O(log n) Merkle builder, and member_ids built by SQLite at the end.
+    # Opt-in process pool (--jobs / VCOC_HASH_JOBS): digests come back in walk order, so everything below is unchanged.
+    jobs = getattr(args, "jobs", None) or hashing.default_jobs()
+    pre = None
+    if jobs > 1 and file_count >= hashing.PARALLEL_MIN_FILES:
+        pre = hashing.hash_files(
+            ((os.path.join(args.file, rel.replace("/", os.sep)), size) for rel, size in _iter_walk(walk)), jobs
         )
-        members.append(evidence)
-        member_ids.append(evidence_id)
-        leaves.append(digest)
+    batch: list[Evidence] = []
+    builder = MerkleRootBuilder()
+    conn = None  # opened at the first flush, so a run that fails before then does not even create the database
+    try:
+        for i, (rel, size_bytes) in enumerate(_iter_walk(walk), 1):
+            full = os.path.join(args.file, rel.replace("/", os.sep))
+            if progress is None:
+                print(f"[{i}/{file_count}] hashing {rel}")
+                on_chunk = None
+            else:
+                progress(i, file_count, rel, size_bytes or 0, base, total_size)
+                on_chunk = lambda done, i=i, rel=rel, size=size_bytes or 0, b=base: progress(  # noqa: E731
+                    i, file_count, rel, size, b + done, total_size
+                )
+            try:
+                result = next(pre) if pre is not None else None
+                if isinstance(result, OSError):
+                    raise result
+                digest = result or (hash_file(full, on_chunk=on_chunk) if on_chunk else hash_file(full))
+                base += size_bytes or 0
+                if size_bytes is None:
+                    size_bytes = os.stat(full).st_size
+            except OSError as exc:
+                print(f"  skipped ({exc})")
+                continue
+            plain = not unplain or not any(rel.startswith(u) for u in unplain)
+            batch.append(
+                Evidence(
+                    evidence_id=f"{folder_id}/{rel}",
+                    original_filename=rel.rpartition("/")[2],
+                    sha256=digest,
+                    size_bytes=size_bytes,
+                    added_at=utc_now_iso(),
+                    source_path=str(root_resolved / rel) if plain and len(full) < 240 else str(Path(full).resolve()),
+                    folder_id=folder_id,
+                )
+            )
+            builder.add(digest)
+            if len(batch) >= INGEST_BATCH_SIZE:
+                if conn is None:
+                    conn = db.connect(args.db)
+                    db.begin_folder(conn)
+                db.add_folder_members(conn, batch)
+                batch = []
 
-    if not leaves:
-        print("No files were successfully hashed; folder not registered.")
-        sys.exit(1)
+        if not builder.count:
+            print("No files were successfully hashed; folder not registered.")
+            sys.exit(1)
 
-    subtree = MerkleTree(leaves)
-    conn = db.connect(args.db)
-    db.put_folder(conn, folder_id, subtree.root, member_ids, members)
-    print(f"Registered folder {folder_id}: {len(member_ids)} file(s), subtree root={subtree.root}")
+        if conn is None:
+            conn = db.connect(args.db)
+            db.begin_folder(conn)
+        db.add_folder_members(conn, batch)
+        root = builder.root()
+        db.finish_folder(conn, folder_id, root)
+    except BaseException:
+        if conn is not None:
+            conn.close()  # discards the open transaction: a cancel or crash leaves nothing behind
+        raise
+    finally:
+        if pre is not None:
+            pre.close()  # stops the workers (also when the progress hook raised)
+    print(f"Registered folder {folder_id}: {builder.count} file(s), subtree root={root}")
 
-    if args.private_key:
-        signing_key = load_signing_key(args.private_key)
-        chain = HashChain.load_db(conn)
-        entry = chain.add_event(
-            evidence_id=folder_id,
-            actor=getattr(args, "actor", None) or "unknown",
-            action="batch-register",
-            signing_key=signing_key,
-        )
-        chain.save_db(conn)
-        print(f"Logged batch-register event #{entry.index} for {folder_id}")
+    with contextlib.closing(conn):
+        if args.private_key:
+            signing_key = load_signing_key(args.private_key)
+            chain = HashChain.load_db(conn)
+            entry = chain.add_event(
+                evidence_id=folder_id,
+                actor=getattr(args, "actor", None) or "unknown",
+                action="batch-register",
+                signing_key=signing_key,
+            )
+            chain.save_db(conn)
+            print(f"Logged batch-register event #{entry.index} for {folder_id}")
 
 
 def cmd_log_event(args: argparse.Namespace) -> None:
     signing_key = load_signing_key(args.private_key)
-    conn = db.connect(args.db)
+    with contextlib.closing(db.connect(args.db)) as conn:
+        _log_event(args, conn, signing_key)
+
+
+def _log_event(args: argparse.Namespace, conn, signing_key) -> None:
     chain = HashChain.load_db(conn)
     evidence_ids = args.evidence_id
     if len(evidence_ids) == 1:
@@ -167,11 +287,13 @@ def cmd_log_event(args: argparse.Namespace) -> None:
 
 
 def cmd_check_evidence(args: argparse.Namespace) -> None:
-    index = _load_evidence_index(args.db)
-    if args.evidence_id not in index:
+    rec = None
+    if Path(args.db).exists():
+        with contextlib.closing(db.connect(args.db)) as conn:
+            rec = db.get_evidence(conn, args.evidence_id)
+    if rec is None:
         print(f"Unknown evidence id: {args.evidence_id}")
         sys.exit(1)
-    rec = index[args.evidence_id]
     file_path = getattr(args, "file", None) or rec.get("source_path")
     if not file_path:
         print(f"MISSING: no source_path recorded for {args.evidence_id} and no --file given.")
@@ -197,17 +319,20 @@ def cmd_verify_chain(args: argparse.Namespace) -> None:
     if not Path(args.db).exists():
         print(f"No custody log found: {args.db} does not exist.")
         sys.exit(1)
-    chain = HashChain.load_db(db.connect(args.db))
+    with contextlib.closing(db.connect(args.db)) as conn:
+        chain = HashChain.load_db(conn)
     verifying_key = load_verifying_key(args.public_key)
-    ok, break_index, reason = chain.verify(verifying_key)
+    per_entry = chain.verify_each(verifying_key)
+    first_bad = next((v for v in per_entry if not v.ok), None)
+    ok = first_bad is None
     if ok:
-        print(f"OK: chain of {len(chain.entries)} entries verified ({reason}).")
+        print(f"OK: chain of {len(chain.entries)} entries verified (chain verified).")
     else:
-        print(f"TAMPER DETECTED at entry #{break_index}: {reason}")
+        # verify_each lists reasons in the same order verify() checks them, and the first failing entry has no upstream reason
+        print(f"TAMPER DETECTED at entry #{first_bad.index}: {first_bad.reason.split('; ')[0]}")
 
     if chain.entries:
         chain_view = build_chain_view([e.to_dict() for e in chain.entries])
-        per_entry = chain.verify_each(verifying_key)
         print()
         for entry, verification in zip(chain_view, per_entry):
             for line in format_entry_detail_lines(entry, verification=verification):
@@ -222,13 +347,28 @@ def cmd_export(args: argparse.Namespace) -> None:
     if not Path(args.db).exists():
         print(f"Nothing to export: {args.db} does not exist.")
         sys.exit(1)
-    conn = db.connect(args.db)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "custody_log.json").write_text(HashChain.load_db(conn).to_json(), encoding="utf-8")
-    (out_dir / "evidence_index.json").write_text(json.dumps(db.load_evidence_index(conn), indent=2), encoding="utf-8")
-    (out_dir / "folder_index.json").write_text(json.dumps(db.load_folder_index(conn), indent=2), encoding="utf-8")
-    print(f"Exported custody_log.json, evidence_index.json, folder_index.json -> {out_dir}")
+    with contextlib.closing(db.connect(args.db)) as conn:
+        chain = HashChain.load_db(conn)
+        (out_dir / "custody_log.json").write_text(chain.to_json(), encoding="utf-8")
+        (out_dir / "evidence_index.json").write_text(json.dumps(db.load_evidence_index(conn), indent=2), encoding="utf-8")
+        (out_dir / "folder_index.json").write_text(json.dumps(db.load_folder_index(conn), indent=2), encoding="utf-8")
+        groups = db.group_leaves(conn, counts=False)
+    # The anchor: two short values that pin the whole store as of now. Keep a copy OUTSIDE the database (a ticket, an
+    # email, a printout): a store rewritten later, or a log cut short, no longer matches the copy.
+    anchor = {
+        "exported_at": utc_now_iso(),
+        "chain_entries": len(chain.entries),
+        "chain_head_hash": chain.last_hash,
+        "merkle_leaves": len(groups),
+        "merkle_root": MerkleTree([leaf for _, leaf, _ in groups]).root if groups else None,
+    }
+    (out_dir / "anchor.json").write_text(json.dumps(anchor, indent=2), encoding="utf-8")
+    print(f"Exported custody_log.json, evidence_index.json, folder_index.json, anchor.json -> {out_dir}")
+    print("Anchor (keep a copy outside this database):")
+    print(f"  chain head hash ({anchor['chain_entries']} entries): {anchor['chain_head_hash']}")
+    print(f"  merkle root ({anchor['merkle_leaves']} leaves)    : {anchor['merkle_root'] or '(no evidence)'}")
 
 
 def _build_main_tree(evidence_index: dict, folder_index: dict) -> tuple[MerkleTree, list[str]]:
@@ -243,50 +383,50 @@ def _build_main_tree(evidence_index: dict, folder_index: dict) -> tuple[MerkleTr
 
 
 def cmd_merkle_root(args: argparse.Namespace) -> None:
-    index = _load_evidence_index(args.db)
-    if not index:
+    if not Path(args.db).exists():
+        groups = []
+    else:
+        with contextlib.closing(db.connect(args.db)) as conn:
+            groups = db.group_leaves(conn)
+    if not groups:
         print("No evidence registered yet.")
         sys.exit(1)
-    folder_index = _load_folder_index(args.db)
-    tree, grouped_ids = _build_main_tree(index, folder_index)
-    print(f"Merkle root over {len(grouped_ids)} evidence file(s)/folder(s): {tree.root}")
+    tree = MerkleTree([leaf for _, leaf, _ in groups])
+    print(f"Merkle root over {len(groups)} evidence file(s)/folder(s): {tree.root}")
 
     print()
-    tree_view = build_tree_view(index, folder_index)
-    for node in tree_view["nodes"]:
-        if node["children"]:
-            print(f"  {node['id']}  {node['root']}  ({len(node['children'])} files)")
+    for gid, leaf, member_count in groups:
+        if member_count:  # a folder: its leaf is the folder's own Merkle root
+            print(f"  {gid}  {leaf}  ({member_count} files)")
         else:
-            print(f"  {node['id']}  {node['sha256']}")
+            print(f"  {gid}  {leaf}")
 
 
 def cmd_merkle_proof(args: argparse.Namespace) -> None:
-    index = _load_evidence_index(args.db)
-    if args.evidence_id not in index:
+    rec = None
+    if Path(args.db).exists():
+        with contextlib.closing(db.connect(args.db)) as conn:
+            rec = db.get_evidence(conn, args.evidence_id)
+            if rec is not None:
+                # Streamed: the folder's members and the groups are read once each and never held as lists or trees.
+                folder_id = rec.get("folder_id")
+                if folder_id:
+                    _, leaf, local_proof, subtree_root = merkle_proof_stream(
+                        db.iter_member_leaves(conn, folder_id), args.evidence_id
+                    )
+                    _, _, folder_proof, root = merkle_proof_stream(db.iter_group_leaves(conn), folder_id)
+                else:
+                    _, _, local_proof, root = merkle_proof_stream(db.iter_group_leaves(conn), args.evidence_id)
+                    leaf, subtree_root, folder_proof = rec["sha256"], root, []
+    if rec is None:
         print(f"Unknown evidence id: {args.evidence_id}")
         sys.exit(1)
-    folder_index = _load_folder_index(args.db)
-    main_tree, grouped_ids = _build_main_tree(index, folder_index)
 
-    rec = index[args.evidence_id]
-    folder_id = rec.get("folder_id")
-    if folder_id:
-        member_ids = folder_index[folder_id]["member_ids"]
-        folder_leaves = [index[eid]["sha256"] for eid in member_ids]
-        folder_tree = MerkleTree(folder_leaves)
-        local_index = member_ids.index(args.evidence_id)
-        main_index = grouped_ids.index(folder_id)
-        leaf = folder_leaves[local_index]
-        proof = build_nested_proof(folder_tree, local_index, main_tree, main_index)
-    else:
-        main_index = grouped_ids.index(args.evidence_id)
-        leaf = rec["sha256"]
-        proof = build_nested_proof(main_tree, main_index, None, None)
-
+    proof = NestedProof(local_proof=local_proof, subtree_root=subtree_root, folder_proof=folder_proof)
     output = {
         "evidence_id": args.evidence_id,
         "leaf": leaf,
-        "root": main_tree.root,
+        "root": root,
         "proof": nested_proof_to_dict(proof),
     }
     if args.out:
@@ -321,6 +461,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Folder mode only: sign a batch-register custody event with this key (omit to skip logging)",
     )
     p.add_argument("--actor", default=None, help="Folder mode only: actor recorded on the batch-register event")
+    p.add_argument(
+        "--jobs",
+        type=int,
+        default=None,
+        help="Folder mode only: hash with this many worker processes (default 1, or $VCOC_HASH_JOBS)",
+    )
     p.set_defaults(func=cmd_add_evidence)
 
     p = sub.add_parser("log-event", help="Append a custody event")

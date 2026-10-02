@@ -2,6 +2,7 @@ import pytest
 
 from vcoc.hashing import hash_bytes
 from vcoc.merkle import (
+    MerkleRootBuilder,
     MerkleTree,
     build_nested_proof,
     nested_proof_from_dict,
@@ -112,3 +113,29 @@ def test_nested_proof_serialization_round_trip():
 
     round_tripped = nested_proof_from_dict(nested_proof_to_dict(proof))
     assert verify_nested_proof(folder_tree.leaves[2], round_tripped, main_tree.root)
+
+
+# --- Task M1: incremental root (O(log n) memory) must equal MerkleTree's root, duplicate-last-node rule included ---
+
+@pytest.mark.parametrize("n", [*range(1, 70), 127, 128, 129, 255, 256, 257, 1000, 1023, 1024, 1025])
+def test_incremental_root_equals_merkle_tree_root(n):
+    leaves = [hash_bytes(str(i).encode()) for i in range(n)]
+    builder = MerkleRootBuilder()
+    for leaf in leaves:
+        builder.add(leaf)
+
+    assert builder.root() == MerkleTree(leaves).root
+    assert builder.count == n
+
+
+def test_incremental_root_keeps_only_log_n_pending_nodes():
+    builder = MerkleRootBuilder()
+    for i in range(5000):
+        builder.add(hash_bytes(str(i).encode()))
+
+    assert sum(p is not None for p in builder.pending) <= 13  # popcount(5000) <= log2(5000)
+
+
+def test_incremental_root_of_nothing_is_an_error():
+    with pytest.raises(ValueError):
+        MerkleRootBuilder().root()

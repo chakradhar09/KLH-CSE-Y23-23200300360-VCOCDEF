@@ -114,3 +114,82 @@ def test_verify_chain_shows_per_entry_tamper_status_for_broken_entry(tmp_path):
     output = _run_verify_chain(tmp_path, expect_exit=True)
 
     assert "TAMPER" in output
+
+
+def _seed_three_entry_chain(tmp_path, tamper=None):
+    signing_key, _ = generate_keypair()
+    save_keypair(signing_key, tmp_path / "priv.pem", tmp_path / "pub.pem")
+    chain = HashChain()
+    for i in range(3):
+        chain.add_event(evidence_id=f"EV00{i}", actor="J. Doe", action="reviewed", signing_key=signing_key)
+    if tamper is not None:
+        tamper(chain.entries[1])
+    chain.save_db(db.connect(tmp_path / "vcoc.db"))
+
+
+def _flip_first_hex_char(sig: str) -> str:
+    return ("0" if sig[0] != "0" else "1") + sig[1:]
+
+
+def _tamper_prev_hash(entry):
+    entry.prev_hash = "f" * 64  # also breaks entry_hash + signature; summary must keep only the FIRST reason
+
+
+def _tamper_entry_hash(entry):
+    entry.entry_hash = "a" * 64
+
+
+def _tamper_signature(entry):
+    entry.signature = _flip_first_hex_char(entry.signature)
+
+
+def test_verify_chain_tamper_summary_line_is_unchanged_for_each_failure_kind(tmp_path):
+    """Characterization: the 'TAMPER DETECTED at entry #i: reason' line reports the first failing
+    entry and only its first reason, whichever check trips first."""
+    cases = [
+        (_tamper_prev_hash, "prev_hash does not match preceding entry"),
+        (_tamper_entry_hash, "entry_hash does not match recomputed payload hash"),
+        (_tamper_signature, "signature verification failed"),
+    ]
+    for tamper, reason in cases:
+        case_dir = tmp_path / tamper.__name__
+        case_dir.mkdir()
+        _seed_three_entry_chain(case_dir, tamper=tamper)
+
+        output = _run_verify_chain(case_dir, expect_exit=True)
+
+        assert f"TAMPER DETECTED at entry #1: {reason}\n" in output, tamper.__name__
+
+
+def test_verify_chain_empty_log_still_reports_ok(tmp_path):
+    signing_key, _ = generate_keypair()
+    save_keypair(signing_key, tmp_path / "priv.pem", tmp_path / "pub.pem")
+    db.connect(tmp_path / "vcoc.db").close()
+
+    output = _run_verify_chain(tmp_path)
+
+    assert "OK: chain of 0 entries verified (chain verified)." in output
+
+
+def test_verify_chain_verifies_each_signature_exactly_once(tmp_path, monkeypatch):
+    import vcoc.hash_chain as hash_chain_module
+
+    real_verify = hash_chain_module.verify_signature
+    calls = []
+
+    def counting_verify(*args, **kwargs):
+        calls.append(1)
+        return real_verify(*args, **kwargs)
+
+    monkeypatch.setattr(hash_chain_module, "verify_signature", counting_verify)
+
+    _seed_three_entry_chain(tmp_path)
+    _run_verify_chain(tmp_path)
+    assert len(calls) == 3
+
+    calls.clear()
+    tampered = tmp_path / "tampered"
+    tampered.mkdir()
+    _seed_three_entry_chain(tampered, tamper=_tamper_signature)
+    _run_verify_chain(tampered, expect_exit=True)
+    assert len(calls) == 3

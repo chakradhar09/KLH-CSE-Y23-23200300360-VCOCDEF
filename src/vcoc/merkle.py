@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from .hashing import hash_hex_pair
@@ -54,6 +55,103 @@ class MerkleTree:
             proof.append(ProofStep(sibling=sibling, is_left=is_right_node))
             index //= 2
         return proof
+
+
+class MerkleRootBuilder:
+    """Root of the same tree as MerkleTree (odd last node paired with itself), fed one leaf at a time.
+
+    Keeps one pending node per tree level, so memory is O(log n) instead of every level of the tree.
+    """
+
+    def __init__(self) -> None:
+        self.pending: list[str | None] = []
+        self.count = 0
+
+    def add(self, leaf: str) -> None:
+        self.count += 1
+        node, level = leaf, 0
+        while level < len(self.pending) and self.pending[level] is not None:
+            node = hash_hex_pair(self.pending[level], node)
+            self.pending[level] = None
+            level += 1
+        if level == len(self.pending):
+            self.pending.append(None)
+        self.pending[level] = node
+
+    def root(self) -> str:
+        if not self.count:
+            raise ValueError("Merkle tree requires at least one leaf")
+        top = max(k for k, p in enumerate(self.pending) if p is not None)
+        carry: str | None = None  # the last (odd) node of the level being folded
+        for level in range(top + 1):
+            left = self.pending[level]
+            if carry is None:
+                if left is None:
+                    continue
+                if level == top:
+                    return left  # a complete subtree that is the whole tree
+                carry = hash_hex_pair(left, left)
+            else:
+                carry = hash_hex_pair(left if left is not None else carry, carry)
+        return carry
+
+
+def merkle_proof_stream(items, target_key):
+    """(index, leaf, proof, root) of the first leaf whose key is `target_key`, from an iterable of (key, leaf_hex).
+
+    Same tree, same proof steps and same root as MerkleTree(...).get_proof(index), but the leaves are only streamed
+    through: memory is the current level as raw 32-byte values (about 32 bytes per two leaves) instead of every level as
+    hex strings (~113 bytes per node), so a 416,000-leaf folder needs ~7 MB instead of ~95 MB.
+    Raises KeyError if no leaf has that key and ValueError if there are no leaves.
+    """
+    sha = hashlib.sha256
+    level = bytearray()  # the nodes of level 1: one hash per pair of leaves
+    index = leaf_hex = sibling = None
+    previous = None  # the left leaf of the pair being read
+    want_next = False  # the target is a left leaf: its sibling is the next leaf (or itself, if it is the last)
+    n = 0
+    for key, hex_leaf in items:
+        raw = bytes.fromhex(hex_leaf)
+        if index is None and key == target_key:
+            index, leaf_hex = n, hex_leaf
+            if n % 2:
+                sibling = previous
+            else:
+                want_next = True
+        elif want_next:
+            sibling, want_next = raw, False
+        if n % 2:
+            level += sha(previous + raw).digest()
+        else:
+            previous = raw
+        n += 1
+    if n == 0:
+        raise ValueError("Merkle tree requires at least one leaf")
+    if index is None:
+        raise KeyError(target_key)
+    if want_next:  # the target is the last leaf and has no right neighbour
+        sibling = previous
+    if n % 2:  # an odd last leaf is paired with itself
+        level += sha(previous + previous).digest()
+    if n == 1:
+        return 0, leaf_hex, [], leaf_hex
+
+    proof = [ProofStep(sibling=sibling.hex(), is_left=index % 2 == 1)]
+    position = index >> 1
+    while len(level) > 32:
+        nodes = len(level) // 32
+        is_right = position % 2 == 1
+        sibling_at = position - 1 if is_right else position + 1
+        if sibling_at >= nodes:
+            sibling_at = position
+        proof.append(ProofStep(sibling=level[sibling_at * 32 : sibling_at * 32 + 32].hex(), is_left=is_right))
+        upper = bytearray()
+        for i in range(0, nodes, 2):
+            left = level[i * 32 : i * 32 + 32]
+            right = level[(i + 1) * 32 : (i + 1) * 32 + 32] if i + 1 < nodes else left
+            upper += sha(left + right).digest()
+        level, position = upper, position >> 1
+    return index, leaf_hex, proof, level.hex()
 
 
 def verify_proof(leaf: str, proof: list[ProofStep], root: str) -> bool:

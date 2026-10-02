@@ -144,7 +144,12 @@ def prompt_path(title: str, label: str, default: str = "", dirs_only: bool = Fal
     return app.run()
 
 
-def confirm(question: str) -> bool:
+def confirm_prompt(question: str, default: bool) -> str:
+    return f" {question} {'[Y/n]' if default else '[y/N]'}: "
+
+
+def confirm(question: str, default: bool = False) -> bool:
+    """y/n question; Enter gives `default`, Esc and Ctrl-C always mean no."""
     kb = KeyBindings()
 
     @kb.add("y")
@@ -156,11 +161,14 @@ def confirm(question: str) -> bool:
     @kb.add("N")
     @kb.add("escape")
     @kb.add("c-c")
-    @kb.add("enter")
     def _(event):
         event.app.exit(result=False)
 
-    control = FormattedTextControl(lambda: f" {question} [y/N]: ")
+    @kb.add("enter")
+    def _(event):
+        event.app.exit(result=default)
+
+    control = FormattedTextControl(lambda: confirm_prompt(question, default))
     app = Application(
         layout=Layout(Frame(Window(control))),
         key_bindings=kb,
