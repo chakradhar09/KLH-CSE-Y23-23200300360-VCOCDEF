@@ -354,12 +354,35 @@ def _confirm_line(body: str, theme: Theme, width: int | None) -> Fragments:
     return out
 
 
+_MERKLE_ROOT = re.compile(r"^(Merkle root over .*?:)(\s+)([0-9a-f]{64})$")
+_MERKLE_ITEM = re.compile(r"^(\s+)(\S+)(\s+)([0-9a-f]{64})(\s+\(\d+ files\))?$")
+_JSON_KEY = re.compile(r'^(\s*)("[^"]+"\s*:)(.*)$')
+_HEX64 = re.compile(r'[0-9a-f]{64}')
+
+
 def _output_line(body: str, theme: Theme, width: int | None) -> Fragments:
-    """A line of command output (the add-evidence summary, a check result, a proof)."""
+    """A line of command output (the add-evidence summary, a check result, the Merkle root list, a proof)."""
     if body.strip() == "Summary":
         return [("class:accent", body)]
     if body.startswith("Registered"):
         return [("class:ok", "Registered"), ("", body[len("Registered"):])]
+    if body.startswith("Wrote"):
+        return [("class:ok", "Wrote"), ("", body[len("Wrote"):])]
+    root = _MERKLE_ROOT.match(body)
+    if root:
+        label, gap, value = root.groups()
+        return [("class:dim", label), ("", gap), ("class:accent", value)]
+    item = _MERKLE_ITEM.match(body)
+    if item:
+        indent, name, gap, leaf, count = item.groups()
+        out = [("", indent), ("", name), ("", gap), ("class:dim", leaf)]
+        return out + ([("class:dim", count)] if count else [])
+    key = _JSON_KEY.match(body)
+    if key:
+        indent, name, rest = key.groups()
+        found = _HEX64.search(rest) if name.strip('": ') == "root" else None  # only the root's hash gets the accent
+        value = [("", rest[: found.start()]), ("class:accent", found.group(0)), ("", rest[found.end():])] if found else [("", rest)]
+        return [("", indent), ("class:dim", name), *value]
     level = _LEVEL.match(body)
     if level:
         return [("class:warn", level.group(0)), ("", body[level.end():])]
@@ -470,12 +493,13 @@ def inner_width() -> int | None:
 def styled(render, kind: str = "text", width=None):
     """A screen's string renderer as a callable returning styled fragments for the current theme (ASCII-converted when needed).
 
-    `width` is a column count or a zero-argument callable returning one; it only pads the selected row.
+    `width` is a column count or a zero-argument callable returning one; it only pads the selected row. `kind` may also be
+    a callable, for a screen whose text changes shape (a list that turns into a progress display while it loads).
     """
 
     def fragments() -> Fragments:
         theme = current()
-        return for_display(colorize(render(), kind, theme, width() if callable(width) else width), theme)
+        return for_display(colorize(render(), kind() if callable(kind) else kind, theme, width() if callable(width) else width), theme)
 
     return fragments
 

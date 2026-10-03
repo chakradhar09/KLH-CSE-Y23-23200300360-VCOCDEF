@@ -7,6 +7,7 @@ Home, End and F5 still work, only their mention left the hint.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -67,7 +68,8 @@ def test_the_sidebar_screen_uses_the_default_help_line_when_none_is_given():
 def test_the_real_verification_screen_shows_its_help_line_in_full_at_80_columns(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # no database here: the Chain tab says so, and the help line is what we are after
     _, raw = drive(lambda: verification_screen.run_verification_screen({}), "q")
-    text = visible(raw)
+    # The screen opens behind a loading screen, so read everything that was drawn, not just the first screen.
+    text = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", raw)
     assert verification_screen.HELP_VERIFICATION.strip() in text and "Esc/q back" in text
 
 

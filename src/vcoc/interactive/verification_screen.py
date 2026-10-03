@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from prompt_toolkit import Application
+from prompt_toolkit.application import get_app
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import HSplit, Layout, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
@@ -22,11 +23,13 @@ from vcoc import db
 from . import status as chain_status
 from . import theme
 from .evidence_search import _add_jump_keys, _visible_height, window_text
+from .loading import run_with_loading
 from vcoc.hash_chain import HashChain
 from vcoc.visualize import build_chain_view, format_entry_detail_lines
 
 TABS = ["Chain", "Evidence", "Merkle"]
 _SIDEBAR_WIDTH = 40  # the sidebar's widest column count; the selected row's tint is padded to it
+_SIDEBAR_BAR_CELLS = 24  # a progress bar or marquee that fits the column with its indent and percentage
 # Help lines must fit the 78 columns inside a frame on an 80-column terminal (tests/test_help_lines.py checks every HELP_*).
 HELP_SIDEBAR = " ↑/↓ select   PgUp/PgDn/Home/End jump   Ctrl-R/F5 refresh   Esc/q back"
 HELP_VERIFICATION = " Tab/←→ section   1-3 jump   ↑/↓ PgUp/PgDn   Ctrl-R refresh   Esc/q back"
@@ -290,10 +293,12 @@ class _BackgroundLoad:
     Starting a new load or calling cancel() supersedes the running one: its progress callback raises
     _Cancelled (stopping the hash at the next chunk) and its result is dropped, never published."""
 
-    def __init__(self, on_change, on_result=None, min_interval: float = 0.1):
+    def __init__(self, on_change, on_result=None, min_interval: float = 0.1, clock=time.monotonic):
         self._on_change = on_change
         self._on_result = on_result
         self._min_interval = min_interval
+        self._clock = clock
+        self._started = 0.0
         self._lock = threading.Lock()
         self._generation = 0
         self._last_change = 0.0
@@ -315,11 +320,35 @@ class _BackgroundLoad:
         self._status = text
         self._progress = None
 
+    def fraction(self) -> float | None:
+        """How far through all the files the re-hash is (finished files plus the part done of the current one); None before any."""
+        if self._progress is None:
+            return None
+        i, n, _, done, total = self._progress
+        part = min(done / total, 1.0) if total else 1.0
+        return min(((i - 1) + part) / n, 1.0) if n else 1.0
+
+    def screen_text(self) -> str:
+        """What the sidebar column shows while this loads: short lines (the column is at most 40 wide), a block bar when
+        the progress is known and a moving marquee when it is not, and the elapsed clock."""
+        elapsed = self._clock() - self._started
+        clock = f"  {elapsed:.1f} s"
+        if self._progress is None:
+            return "\n".join(["  Working...", "", "  " + theme.marquee(elapsed, _SIDEBAR_BAR_CELLS, 5), "", clock])
+        i, n, evidence_id, done, total = self._progress
+        fmt = verifier_module._fmt_bytes
+        name = evidence_id if len(evidence_id) <= 30 else evidence_id[:29] + "…"
+        return "\n".join([
+            "  Re-hashing evidence", f"  File {i:,} of {n:,}", f"  {name}", f"  {fmt(done)} of {fmt(total)}", "",
+            "  " + theme.progress_bar(self.fraction(), _SIDEBAR_BAR_CELLS), "", clock,
+        ])
+
     def start(self, load) -> None:
         with self._lock:
             self._generation += 1
             gen = self._generation
             self.loading = True
+            self._started = self._clock()
             self.status = "Loading..."
 
         def progress(i: int, n: int, evidence_id: str, done: int, total: int) -> None:
@@ -370,6 +399,15 @@ def _sidebar_text(rows: list[str], selected: int, top: list[int], height: int) -
     )
 
 
+def _sidebar_lines(has_tabs: bool) -> int:
+    """Lines in the sidebar column: the terminal minus the frame, the rule and help line (and the tab bar with its rule)."""
+    try:
+        rows = get_app().output.get_size().rows
+    except Exception:
+        rows = 40
+    return max(5, rows - 4 - (2 if has_tabs else 0))
+
+
 def _run_sidebar_detail_app(
     title: str,
     load_rows: "callable[[], tuple[list[str], list[list[str]]]]",
@@ -377,6 +415,7 @@ def _run_sidebar_detail_app(
     extra_keybindings: "callable[[object], None] | None" = None,
     help_text: str = HELP_SIDEBAR,
     slow_load: "tuple[callable[[], object | None], callable[[callable], tuple[list[str], list[list[str]]]]] | None" = None,
+    loading_label: str | None = None,
 ) -> None:
     # slow_load = (slow_key, load_with_progress). slow_key() returns a hashable key while the active tab is a slow tab
     # (None for fast tabs). Each slow tab keeps ONE background loader and result for the life of the screen, so switching
@@ -408,12 +447,18 @@ def _run_sidebar_detail_app(
             return (None, *view[0])
         return (loaders.get(key), *results.get(key, ([], [])))
 
+    # With a loading_label the first (fast-tab) load runs behind the shared full-screen loading screen, so the plain terminal
+    # never shows between the menu and this screen; the result is used as-is, not computed a second time.
+    preloaded = []
+    if loading_label is not None and active_key() is None:
+        preloaded.append(run_with_loading(title, load_rows, loading_label))
+
     def load(refresh: bool = False):
         selected_row[0] = 0
         top[0] = 0
         key = active_key()
         if key is None:
-            view[0] = load_rows()
+            view[0] = preloaded.pop() if preloaded else load_rows()
         elif refresh or key not in started:
             started.add(key)
             results.pop(key, None)
@@ -422,11 +467,17 @@ def _run_sidebar_detail_app(
 
     load()
 
+    def sidebar_loading() -> bool:
+        bg = current()[0]
+        return bg is not None and bg.loading
+
     def render_sidebar() -> str:
         bg, rows, _ = current()
         if bg is not None and bg.loading:
-            return f"  {bg.status}"
-        return _sidebar_text(rows, selected_row[0], top, _visible_height())
+            return bg.screen_text()
+        # The column's real height, so the rows fill it and the position footer lands on its last line.
+        lines = _sidebar_lines(top_bar is not None)
+        return _sidebar_text(rows, selected_row[0], top, lines - 1 if len(rows) > lines else lines)
 
     def render_detail() -> str:
         bg, _, details = current()
@@ -480,7 +531,9 @@ def _run_sidebar_detail_app(
             VSplit(
                 [
                     Window(
-                        FormattedTextControl(theme.styled(render_sidebar, "sidebar", width=_SIDEBAR_WIDTH)),
+                        FormattedTextControl(
+                            theme.styled(render_sidebar, lambda: "loading" if sidebar_loading() else "sidebar", width=_SIDEBAR_WIDTH)
+                        ),
                         width=D(min=28, max=_SIDEBAR_WIDTH),
                     ),
                     Window(width=1, char=divider, style="class:chrome"),
@@ -496,6 +549,7 @@ def _run_sidebar_detail_app(
         key_bindings=kb,
         full_screen=True,
         style=theme.app_style(shell_theme),
+        refresh_interval=0.1 if slow_load is not None else None,  # a tab that loads in the background animates its marquee
     )
     holder.append(app)
     try:
@@ -563,8 +617,11 @@ def run_verification_screen(shell_config: dict | None = None) -> None:
         ),
         extra_keybindings=add_tab_keybindings,
         help_text=HELP_VERIFICATION,
+        loading_label="Checking the custody chain...",
     )
 
 
 def run_verify_chain_screen(shell_config: dict | None = None) -> None:
-    _run_sidebar_detail_app("Verify Chain", lambda: _run_chain_check(shell_config))
+    _run_sidebar_detail_app(
+        "Verify Chain", lambda: _run_chain_check(shell_config), loading_label="Verifying the custody chain..."
+    )

@@ -179,3 +179,18 @@ Differences from the design above:
 - **Hint styling.** Key names run up to the first lowercase word, so `↑/↓ PgUp/PgDn select` keeps both keys plain.
 - **`logo_lines(rows)`** takes only the terminal height, and `colorize(text, kind, theme, width)` takes the kind of text;
   `for_display(fragments, theme)` applies the ASCII fallback.
+
+### Follow-up after a hands-on review (2026-10-03)
+
+Screens that still looked like the old shell, now brought into line (49 tests in `tests/test_verification_look.py`):
+
+- **Verification > Evidence / Merkle tabs.** While a tab works in the background, the sidebar shows short lines that fit its
+  40-column width (the old single line `Re-hashing 5/9  EV005  1.0 MB / 2.0 MB (50%)` was clipped, hiding the file count): the
+  file count with thousands separators, the file, its bytes, a 24-cell block bar of overall progress, and the clock. A tab with
+  no progress (Merkle) shows the marquee. The screen redraws ten times a second only when it has a background tab.
+- **Loading screen before Verify chain and Verification.** The chain is checked behind the shared full-screen loading screen,
+  once (the result is reused by the screen), so a plain terminal never shows between the menu and these screens.
+- **Position footer** (`1-40 of 92,879`). The sidebar now uses the column's real height, so the rows fill it and the footer sits
+  on its last line instead of floating above it.
+- **Merkle root and Merkle proof pages.** Root line: quiet label and accented root; items: id plain, hash and file count dim;
+  proof JSON: keys dim, the root's hash accented; `Wrote proof -> file` is a success line.
