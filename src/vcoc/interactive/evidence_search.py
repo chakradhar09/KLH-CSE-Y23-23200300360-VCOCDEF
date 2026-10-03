@@ -17,6 +17,12 @@ from prompt_toolkit.widgets import Frame
 
 from vcoc import db
 
+from . import theme
+
+# Help lines must fit the 78 columns inside a frame on an 80-column terminal (tests/test_help_lines.py checks every HELP_*).
+HELP_SEARCH = " ↑/↓ PgUp/PgDn select   Enter choose   Ctrl-R refresh   Esc cancel"
+HELP_SEARCH_MULTI = " ↑/↓ PgUp/PgDn select   Space toggle   Enter confirm   Esc cancel"
+
 
 def search(index: dict, query: str) -> list[dict]:
     q = query.lower()
@@ -571,20 +577,25 @@ def _run_search(source: EvidenceSource, multi: bool, worker_source=None):
         event.app.exit(result=None)
 
     if multi:
-        help_text = " ↑/↓ select   PgUp/PgDn/Home/End jump   Space toggle   Enter confirm   Esc cancel"
+        help_text = HELP_SEARCH_MULTI
         title = "Search / Browse Evidence (multi-select)"
     else:
-        help_text = " ↑/↓ select   PgUp/PgDn/Home/End jump   Enter choose   Ctrl-R/F5 refresh   Esc cancel"
+        help_text = HELP_SEARCH
         title = "Search / Browse Evidence"
     body = HSplit(
         [
-            Window(FormattedTextControl(get_query_label), height=1),
-            Frame(Window(BufferControl(buffer=query_buf)), height=D(min=3, max=3)),
-            Window(FormattedTextControl(get_results_text)),
-            Window(FormattedTextControl(lambda: help_text), height=1),
+            Window(FormattedTextControl(theme.styled(get_query_label, "prompt")), height=1),
+            Frame(Window(BufferControl(buffer=query_buf)), height=D(min=3, max=3), style="class:input"),
+            Window(FormattedTextControl(theme.styled(get_results_text, "results", width=theme.inner_width))),
+            Window(FormattedTextControl(theme.styled(lambda: help_text, "hint")), height=1),
         ]
     )
-    app = Application(layout=Layout(Frame(body, title=title)), key_bindings=kb, full_screen=True)
+    app = Application(
+        layout=Layout(Frame(body, title=title)),
+        key_bindings=kb,
+        full_screen=True,
+        style=theme.app_style(theme.current()),
+    )
     holder.append(app)
     try:
         return app.run()

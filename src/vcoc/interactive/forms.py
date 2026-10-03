@@ -19,6 +19,13 @@ from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.dimension import D
 from prompt_toolkit.widgets import Frame
 
+from . import theme
+
+# Help lines must fit the 78 columns inside a frame on an 80-column terminal (tests/test_help_lines.py checks every HELP_*).
+HELP_TEXT = " Enter confirm   Esc cancel"
+HELP_PATH = " Tab/↓ browse matches   Enter select/confirm   Esc cancel"
+HELP_OUTPUT = " ↑/↓/PgUp/PgDn scroll   any other key returns to menu"
+
 
 def prompt_text(title: str, label: str, default: str = "") -> str | None:
     buf = Buffer(multiline=False)
@@ -37,15 +44,16 @@ def prompt_text(title: str, label: str, default: str = "") -> str | None:
 
     body = HSplit(
         [
-            Window(FormattedTextControl(lambda: f" {label}"), height=1),
-            Frame(Window(BufferControl(buffer=buf)), height=D(min=3, max=3)),
-            Window(FormattedTextControl(lambda: " Enter confirm   Esc cancel"), height=1),
+            Window(FormattedTextControl(theme.styled(lambda: f" {label}", "prompt")), height=1),
+            Frame(Window(BufferControl(buffer=buf)), height=D(min=3, max=3), style="class:input"),
+            Window(FormattedTextControl(theme.styled(lambda: HELP_TEXT, "hint")), height=1),
         ]
     )
     app = Application(
         layout=Layout(Frame(body, title=title)),
         key_bindings=kb,
         full_screen=True,
+        style=theme.app_style(theme.current()),
     )
     return app.run()
 
@@ -125,12 +133,12 @@ def prompt_path(title: str, label: str, default: str = "", dirs_only: bool = Fal
 
     body = HSplit(
         [
-            Window(FormattedTextControl(lambda: f" {label}"), height=1),
-            Frame(Window(BufferControl(buffer=buf)), height=D(min=3, max=3)),
-            Window(FormattedTextControl(get_results_text)),
+            Window(FormattedTextControl(theme.styled(lambda: f" {label}", "prompt")), height=1),
+            Frame(Window(BufferControl(buffer=buf)), height=D(min=3, max=3), style="class:input"),
+            Window(FormattedTextControl(theme.styled(get_results_text, "list", width=theme.inner_width))),
             Window(
                 FormattedTextControl(
-                    lambda: " Tab/↓ browse matches   Enter select/confirm   Esc cancel"
+                    theme.styled(lambda: HELP_PATH, "hint")
                 ),
                 height=1,
             ),
@@ -140,6 +148,7 @@ def prompt_path(title: str, label: str, default: str = "", dirs_only: bool = Fal
         layout=Layout(Frame(body, title=title)),
         key_bindings=kb,
         full_screen=True,
+        style=theme.app_style(theme.current()),
     )
     return app.run()
 
@@ -168,11 +177,12 @@ def confirm(question: str, default: bool = False) -> bool:
     def _(event):
         event.app.exit(result=default)
 
-    control = FormattedTextControl(lambda: confirm_prompt(question, default))
+    control = FormattedTextControl(theme.styled(lambda: confirm_prompt(question, default), "confirm"))
     app = Application(
         layout=Layout(Frame(Window(control))),
         key_bindings=kb,
         full_screen=True,
+        style=theme.app_style(theme.current()),
     )
     return bool(app.run())
 
@@ -192,13 +202,16 @@ def show_output(title: str, text: str) -> None:
         event.app.exit()
 
     footer = Window(
-        FormattedTextControl(lambda: " ↑/↓/PgUp/PgDn scroll   any other key returns to menu"),
+        FormattedTextControl(theme.styled(lambda: HELP_OUTPUT, "hint")),
         height=1,
     )
-    window = Window(BufferControl(buffer=buf, focusable=True), wrap_lines=True, allow_scroll_beyond_bottom=True)
+    window = Window(
+        BufferControl(buffer=buf, focusable=True, lexer=theme.ThemeLexer()), wrap_lines=True, allow_scroll_beyond_bottom=True
+    )
     app = Application(
         layout=Layout(HSplit([Frame(window, title=title), footer]), focused_element=window),
         key_bindings=kb,
         full_screen=True,
+        style=theme.app_style(theme.current()),
     )
     app.run()

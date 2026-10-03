@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>VCoC Shell Design Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;700&display=swap">
+<style>
+/* Layout: control bar over a view area; the simulator is a screen list beside one terminal. */
+:root{
+  --bg:#e8ebee; --surface:#f7f8f9; --ink:#1a1f26; --muted:#515c6a; --line:#c9d0d7;
+  --accent:#8a5200; --accent-ink:#ffffff; --focus:#0b57d0;
+  --ui:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono","Cascadia Mono",Consolas,"DejaVu Sans Mono",monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0b0e12; --surface:#141920; --ink:#e3e7ec; --muted:#8b95a2; --line:#252d37;
+  --accent:#d9a441; --accent-ink:#14100a; --focus:#7ab0ff; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0b0e12; --surface:#141920; --ink:#e3e7ec; --muted:#8b95a2; --line:#252d37;
+  --accent:#d9a441; --accent-ink:#14100a; --focus:#7ab0ff; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:14px/1.55 var(--ui)}
+.page{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:28px 56px;display:flex;flex-direction:column;gap:20px}
+header{display:flex;flex-direction:column;gap:8px;min-width:0}
+.eyebrow{font:600 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+h1{margin:0;font:600 26px/1.2 var(--ui);text-wrap:balance}
+header p{margin:0;max-width:72ch;color:var(--muted)}
+h2{margin:0 0 4px;font:600 16px/1.3 var(--ui)}
+h3{margin:0;font:600 12px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+code,kbd{font-family:var(--mono);font-size:.92em}
+kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--surface)}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+
+.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px 16px;padding:14px;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.ctl{display:flex;flex-direction:column;gap:5px;min-width:0}
+.ctl>span{font:600 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.seg{display:flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--bg)}
+.seg button{flex:1 1 auto;padding:6px 9px;border:0;border-right:1px solid var(--line);background:transparent;white-space:nowrap}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:600}
+
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);overflow-x:auto}
+.tabs button{padding:9px 14px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);white-space:nowrap}
+.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+
+.viewhead{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:end;justify-content:space-between}
+.viewhead p{margin:0;color:var(--muted);max-width:68ch}
+.pick{display:flex;flex-direction:column;gap:4px}
+.pick span{font:600 11px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+select{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:6px 8px;max-width:100%}
+
+.sim{display:grid;grid-template-columns:210px minmax(0,1fr);gap:20px;align-items:start}
+.screens{display:flex;flex-direction:column;gap:2px;min-width:0}
+.screens h3{margin:12px 0 4px}
+.screens h3:first-child{margin-top:0}
+.screens button{text-align:left;padding:6px 10px;border:0;border-left:2px solid transparent;border-radius:0 4px 4px 0;background:transparent;color:var(--muted)}
+.screens button:hover{background:var(--surface);color:var(--ink)}
+.screens button[aria-current="true"]{border-left-color:var(--accent);background:var(--surface);color:var(--ink);font-weight:600}
+.stage{display:flex;flex-direction:column;gap:12px;min-width:0}
+@media (max-width:820px){
+  .sim{grid-template-columns:minmax(0,1fr)}
+  .screens{flex-direction:row;overflow-x:auto;gap:4px;padding-bottom:4px}
+  .screens h3{display:none}
+  .screens button{white-space:nowrap;border-left:0;border-bottom:2px solid transparent;border-radius:4px 4px 0 0}
+  .screens button[aria-current="true"]{border-bottom-color:var(--accent)}
+}
+
+.termbox{margin:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface);min-width:0}
+.termbar{display:flex;align-items:center;gap:6px;padding:7px 12px;font:12px/1 var(--mono);color:var(--muted);border-bottom:1px solid var(--line)}
+.termbar i{width:9px;height:9px;border-radius:50%;background:var(--line)}
+.termbar span{margin-left:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.termwrap{container-type:inline-size;overflow-x:auto;background:var(--t-bg);outline-offset:-3px}
+.term{margin:0 auto;padding:10px 14px 12px;width:calc(80ch + 28px);background:var(--t-bg);color:var(--t-fg);
+  font:400 max(6px,min(15px,1.9cqw))/1.3 var(--mono);white-space:pre;font-variant-ligatures:none}
+.termbox figcaption{padding:8px 12px;font-size:12.5px;color:var(--muted);border-top:1px solid var(--line)}
+.termbox figcaption b{color:var(--ink);font-weight:600}
+.g{display:inline-block;width:1ch;text-align:center;overflow:visible;vertical-align:top}
+.k-chrome{color:var(--c-chrome)}
+.k-dim{color:var(--c-dim)}
+.k-accent{color:var(--c-accent);font-weight:var(--w-accent)}
+.k-ok{color:var(--c-ok)}
+.k-tamper{color:var(--c-tamper);background:var(--c-tamperbg);font-weight:var(--w-tamper)}
+.k-warn{color:var(--c-warn);font-weight:var(--w-warn)}
+.k-btamper{color:var(--c-btamper);font-weight:700}
+.k-title,.k-b{font-weight:var(--w-title);color:var(--t-fg)}
+.k-sel{color:var(--c-selfg);font-weight:var(--w-sel)}
+.k-bgsel{background:var(--c-selbg)}
+.k-cursor{background:var(--t-fg);color:var(--t-bg);animation:blink 1.1s steps(1) infinite}
+.termwrap[data-selmode="reverse"] .k-bgsel{color:var(--c-selfg);font-weight:700}
+@keyframes blink{50%{opacity:0}}
+@media (prefers-reduced-motion:reduce){.k-cursor{animation:none}}
+
+.keys{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.keys button{padding:4px 10px;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;background:var(--surface);font:12px/1.4 var(--mono)}
+.keys button:hover{border-color:var(--accent)}
+.keys .status{margin-left:auto;color:var(--muted);font-size:12.5px}
+.notes{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.notes section{padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);min-width:0}
+.notes ul{margin:8px 0 0;padding-left:18px;color:var(--muted)}
+.notes li{margin:3px 0}
+.notes li b,.notes li code{color:var(--ink)}
+
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr));gap:16px}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:16px}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 11px/1.3 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.sw{display:flex;align-items:center;gap:8px;white-space:nowrap;font:12px/1.2 var(--mono)}
+.sw i{width:26px;height:18px;border-radius:3px;border:1px solid var(--line);display:grid;place-items:center;font:700 11px/1 var(--mono)}
+.sw small{color:var(--muted)}
+.pass{color:#1c7a41}.fail{color:#c0292b}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .pass{color:#5fb878}:root:not([data-theme="light"]) .fail{color:#ff6b68}}
+.lead{display:flex;flex-direction:column;gap:12px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:3px 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);font-size:13px;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="eyebrow">Interface preview · Direction A + status header + progress bar</div>
+    <h1>The VCoC shell, redrawn with a forensic identity</h1>
+    <p>Every screen of <code>python cli.py shell</code> is simulated below. Colors and the logo are a layer over the existing text: same words, same keys, same paging. Click a terminal and use the keyboard, or flip <b>Look</b> to Current to see what changes. All data on these screens is illustrative.</p>
+  </header>
+
+  <section class="controls" aria-label="Preview options" id="controls"></section>
+  <div class="tabs" role="tablist" id="tabs"></div>
+  <main id="view"></main>
+</div>
+
+<script>
+"use strict";
+/* ---------- palettes: the single source for every color shown on this page ---------- */
+const PAL = {
+  dark:  {bg:'#12151a',fg:'#c9cdd4',chrome:'#78838e',dim:'#939ca9',accent:'#d9a441',ok:'#5fb878',tamper:'#ff6b68',tamperbg:'transparent',warn:'#e8944a',selbg:'#262c35',selfg:'#f0c060',selmode:'tint'},
+  light: {bg:'#f6f5f1',fg:'#22262c',chrome:'#727a84',dim:'#545e6c',accent:'#8a5000',ok:'#17703a',tamper:'#b52326',tamperbg:'transparent',warn:'#964b08',selbg:'#e4e0d1',selfg:'#6b3f00',selmode:'tint'},
+  hc:    {bg:'#000000',fg:'#ffffff',chrome:'#ffffff',dim:'#cfcfcf',accent:'#ffd400',ok:'#3dff7d',tamper:'#000000',tamperbg:'#ff5252',warn:'#ffb000',selbg:'#ffffff',selfg:'#000000',selmode:'reverse'},
+  plain: {bg:'#0c0c0c',fg:'#cccccc',chrome:'#cccccc',dim:'#cccccc',accent:'#cccccc',ok:'#cccccc',tamper:'#0c0c0c',tamperbg:'#cccccc',warn:'#cccccc',selbg:'#cccccc',selfg:'#0c0c0c',selmode:'reverse',wAccent:700,wWarn:700}
+};
+const D16 = { /* 16-color terminals: ANSI colors only, so the terminal's own palette decides the exact shade */
+  dark:  {bg:'#0c0c0c',fg:'#cccccc',chrome:'#767676',dim:'#767676',accent:'#c19c00',ok:'#16c60c',tamper:'#e74856',warn:'#c19c00',selbg:'#cccccc',selfg:'#0c0c0c',selmode:'reverse'},
+  light: {bg:'#ffffff',fg:'#1c1c1c',chrome:'#767676',dim:'#767676',accent:'#0037da',ok:'#13a10e',tamper:'#c50f1f',warn:'#c19c00',selbg:'#1c1c1c',selfg:'#ffffff',selmode:'reverse'}
+};
+const VT = {bg:'#000000',fg:'#aaaaaa',chrome:'#aaaaaa',dim:'#aaaaaa',accent:'#ffff55',ok:'#55ff55',tamper:'#ff5555',warn:'#ffff55',selbg:'#aaaaaa',selfg:'#000000',selmode:'reverse'};
+const CUR = {bg:'#0c0c0c',fg:'#cccccc',chrome:'#cccccc',dim:'#cccccc',accent:'#cccccc',ok:'#cccccc',tamper:'#cccccc',tamperbg:'transparent',warn:'#cccccc',selbg:'transparent',selfg:'#cccccc',selmode:'none',wAccent:400,wWarn:400,wTamper:400,wSel:400,wTitle:400};
+
+function palFor(s){
+  if (s.look === 'current') return {...CUR, ...(s.pal || {})};
+  let p = {...PAL[s.theme]};
+  if (s.depth === 16 && D16[s.theme]) p = {...p, ...D16[s.theme]};
+  return {...p, ...(s.pal || {})};
+}
+function varsFor(p){
+  const w = (v, d) => (v === undefined ? d : v);
+  return `--t-bg:${p.bg};--t-fg:${p.fg};--c-chrome:${p.chrome};--c-dim:${p.dim};--c-accent:${p.accent};--c-ok:${p.ok};--c-tamper:${p.tamper};--c-tamperbg:${p.tamperbg};--c-btamper:${p.tamperbg !== 'transparent' ? p.tamperbg : p.tamper};--c-warn:${p.warn};--c-selbg:${p.selbg};--c-selfg:${p.selfg};`
+       + `--w-accent:${w(p.wAccent,400)};--w-warn:${w(p.wWarn,400)};--w-tamper:${w(p.wTamper,700)};--w-sel:${w(p.wSel,700)};--w-title:${w(p.wTitle,700)}`;
+}
+
+/* ---------- WCAG contrast, for the palette table ---------- */
+function lum(hex){const c=[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255).map(v=>v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4));return .2126*c[0]+.7152*c[1]+.0722*c[2]}
+function contrast(a,b){const [x,y]=[lum(a),lum(b)].sort((m,n)=>n-m);return (x+.05)/(y+.05)}
+
+/* ---------- segments, lines, frame ---------- */
+const S = (c, t) => ({c, t});
+const ASCII = {'▸':'>','─':'-','│':'|','┌':'+','┐':'+','└':'+','┘':'+','┤':'|','├':'|','╭':'+','╮':'+','╰':'+','╯':'+','━':'=','◆':'#','■':'#','□':'.','●':'*','◐':'~','✖':'x','·':'-','—':'-','↑':'^','↓':'v','←':'<','→':'>','▼':'v','█':'_','…':'.'};
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const clsOf = c => c.split(' ').filter(Boolean).map(x => 'k-' + x).join(' ');
+function fit(segs, w, fill){
+  const out = []; let n = 0;
+  for (const s of segs){ if (n >= w) break; const t = s.t.slice(0, w - n); out.push({c:s.c, t}); n += t.length; }
+  if (n < w) out.push({c:fill || '', t:' '.repeat(w - n)});
+  return out;
+}
+function selLine(segs){ /* the selected row: tint behind text; verdict colors survive on tint themes */
+  const out = segs.map(s => ({c:(s.c || 'sel') + ' bgsel', t:s.t})); out.pad = 'bgsel'; return out;
+}
+function wrap(segs, w){
+  const rows = []; let cur = [], n = 0;
+  for (const s of segs){
+    let t = s.t;
+    while (t.length){
+      if (n === w){ rows.push(cur); cur = []; n = 0; }
+      const part = t.slice(0, w - n); cur.push({c:s.c, t:part}); n += part.length; t = t.slice(part.length);
+    }
+  }
+  rows.push(cur); return rows;
+}
+function frameLines(lines, cols, rows, title, bc){
+  const W = cols - 2, H = rows - 2;
+  const body = lines.slice(0, H); while (body.length < H) body.push([]);
+  const rest = Math.max(0, cols - 2 - 1 - (title ? title.length + 4 : 0));
+  const top = title ? [S(bc,'┌─┤ '), S('title', title), S(bc,' ├' + '─'.repeat(Math.max(0, rest - 0)) + '┐')]
+                    : [S(bc,'┌' + '─'.repeat(W) + '┐')];
+  const topFit = fit(top, cols);
+  const out = [topFit];
+  for (const l of body) out.push([S(bc,'│'), ...fit(l, W, l.pad), S(bc,'│')]);
+  out.push([S(bc,'└' + '─'.repeat(W) + '┘')]);
+  return out;
+}
+function toHTML(lines, ascii){
+  let bad = 0;
+  const html = lines.map(l => l.map(s => {
+    let t = s.t; if (ascii) t = t.replace(/[^\x00-\x7f]/gu, ch => ASCII[ch] || (bad++, '?'));
+    t = esc(t).replace(/[^\x00-\x7f]/gu, ch => `<span class="g">${ch}</span>`); /* one fixed cell per glyph, whatever font supplies it */
+    return s.c ? `<span class="${clsOf(s.c)}">${t}</span>` : t;
+  }).join('')).join('\n');
+  if (bad) console.warn('ASCII fallback has unmapped glyphs:', bad);
+  return html;
+}
+
+/* ---------- colorize rules (mirrors what theme.colorize() will do) ---------- */
+function cz(text){
+  const segs = []; let rest = text;
+  const m = rest.match(/^(\s*[A-Za-z][\w .-]*?:)(?=\s|$)/);
+  if (m){ segs.push(S('dim', m[1])); rest = rest.slice(m[1].length); }
+  const re = /(TAMPER DETECTED|TAMPER|INVALID|MISMATCH|DOES NOT MATCH claimed root|NOT logged|STALE|MATCHES claimed root|\bOK\b|\bVALID\b|\blogged\b)/g;
+  let last = 0, k;
+  while ((k = re.exec(rest))){
+    if (k.index > last) segs.push(S('', rest.slice(last, k.index)));
+    const w = k[0];
+    segs.push(S(/TAMPER|INVALID|MISMATCH|DOES NOT/.test(w) ? 'tamper' : /NOT logged|STALE/.test(w) ? 'warn' : 'ok', w));
+    last = k.index + w.length;
+  }
+  if (last < rest.length) segs.push(S('', rest.slice(last)));
+  return segs;
+}
+function czRow(text){
+  const m = text.match(/^(OK|TAMPER|!!|--)(\s+)(.*)$/);
+  if (!m) return [S('', text)];
+  return [S(m[1] === 'OK' ? 'ok' : m[1] === '--' ? 'dim' : 'tamper', m[1]), S('', m[2] + m[3])];
+}
+function hint(text){ /* key names plain, descriptions dim */
+  const segs = [];
+  text.split(/(\s{3,})/).forEach(chunk => {
+    if (/^\s+$/.test(chunk)) return segs.push(S('', chunk));
+    const m = chunk.match(/^(\s*)(\S+)(.*)$/);
+    if (!m) return segs.push(S('dim', chunk));
+    segs.push(S('', m[1] + m[2]), S('dim', m[3]));
+  });
+  return segs;
+}
+
+/* ---------- demo data ---------- */
+function hex(seed, n = 64){
+  let x = 0; for (const c of seed) x = (x * 31 + c.charCodeAt(0)) >>> 0; if (!x) x = 1;
+  let out = ''; while (out.length < n){ x ^= x << 13; x >>>= 0; x ^= x >>> 17; x ^= x << 5; x >>>= 0; out += x.toString(16).padStart(8, '0'); }
+  return out.slice(0, n);
+}
+const EVIDENCE = [
+  {id:'EV001', name:'disk_image.E01', size:'412.6 GB'},
+  {id:'EV002', name:'usb_dump.bin', size:'29.8 GB'},
+  {id:'EV003', name:'firmware.bin', size:'16.0 MB'},
+  {id:'EV004', name:'chat_export.json', size:'3.4 MB'},
+  {id:'EV005', name:'case_notes (folder, 214 files)', size:'1.8 GB'},
+  {id:'EV006', name:'router_config.txt', size:'18 KB'},
+  {id:'EV007', name:'camera_clip_03.mp4', size:'96.2 MB'}
+];
+const EVENTS = [
+  {a:'register', e:['EV001'], who:'j.chakri', ts:'2026-09-30T09:12:04Z'},
+  {a:'register', e:['EV002'], who:'j.chakri', ts:'2026-09-30T09:14:51Z'},
+  {a:'transfer', e:['EV001'], who:'a.rao',    ts:'2026-09-30T11:03:40Z'},
+  {a:'register', e:['EV003'], who:'j.chakri', ts:'2026-10-01T09:42:17Z'},
+  {a:'analyze',  e:['EV002'], who:'p.reddy',  ts:'2026-10-01T10:20:09Z'},
+  {a:'register', e:['EV004','EV005'], who:'j.chakri', ts:'2026-10-01T14:31:22Z'},
+  {a:'transfer', e:['EV003'], who:'a.rao',    ts:'2026-10-02T08:05:48Z'},
+  {a:'export',   e:['EV001'], who:'p.reddy',  ts:'2026-10-02T11:47:30Z'}
+];
+const TAMPER_AT = 4;
+const MENU = ['Add evidence','Check evidence integrity','Log custody event','Verify chain','Merkle root','Merkle proof','Generate keypair','Verification (chain / evidence / merkle)','Quit'];
+const TABS = ['Chain','Evidence','Merkle'];
+const fmtBytes = n => n >= 1e9 ? (n/1e9).toFixed(1)+' GB' : n >= 1e6 ? (n/1e6).toFixed(1)+' MB' : (n/1e3).toFixed(1)+' KB';
+
+/* ---------- logos ---------- */
+const chainRow = n => { const a = [S('','  ')]; for (let i=0;i<n;i++){ a.push(S('accent','◆')); if (i<n-1) a.push(S('chrome','━━')); } return a; };
+const LOGOS = {
+  chain:{name:'Chain',
+    full:[chainRow(6),[S('','  '),S('b','VCoC'),S('dim','  Verifiable Chain-of-Custody')],[S('dim','  for digital evidence files')]],
+    one:[[S('accent',' ◆'),S('chrome','━'),S('accent','◆'),S('chrome','━'),S('accent','◆ '),S('b','VCoC'),S('dim','  Verifiable Chain-of-Custody')]]},
+  shield:{name:'Shield',
+    full:[[S('chrome','  ╭─────╮')],[S('chrome','  │ '),S('accent','◆━◆'),S('chrome',' │'),S('b','  VCoC'),S('dim','  Verifiable Chain-of-Custody')],[S('chrome','  ╰──▼──╯'),S('dim','  for digital evidence files')]],
+    one:[[S('chrome',' ╭'),S('accent','◆━◆'),S('chrome','╮ '),S('b','VCoC'),S('dim','  Verifiable Chain-of-Custody')]]},
+  blocks:{name:'Blocks',
+    full:[[S('chrome','  ┌───┐ ┌───┐ ┌───┐')],[S('chrome','  │ '),S('accent','■'),S('chrome',' ├━┤ '),S('accent','■'),S('chrome',' ├━┤ '),S('accent','■'),S('chrome',' │'),S('b','  VCoC'),S('dim','  Verifiable Chain-of-Custody')],[S('chrome','  └───┘ └───┘ └───┘'),S('dim','  for digital evidence files')]],
+    one:[[S('chrome',' ['),S('accent','■'),S('chrome',']━['),S('accent','■'),S('chrome',']━['),S('accent','■'),S('chrome','] '),S('b','VCoC'),S('dim','  Verifiable Chain-of-Custody')]]}
+};
+const logoMode = rows => rows >= 24 ? 'full' : rows >= 16 ? 'one' : 'none';
+
+/* ---------- state ---------- */
+const st = {look:'new', theme:'dark', ascii:false, rows:24, depth:24, chain:'clean', logo:'shield',
+  view:'sim', screen:'menu', menuSel:0, sideSel:0, query:'', searchSel:0, checked:new Set(), actor:'j.chakri', pathSel:0,
+  t0:0, flow:false, msg:'Click the terminal, then use the arrow keys.'};
+
+/* ---------- screen builders: (s, W, H, t) -> {title, lines, bc} ---------- */
+function stateColor(s){ return s.chain === 'tamper' ? 'tamper' : s.chain === 'stale' ? 'warn' : 'ok'; }
+function statusLine(s){
+  const sep = S('chrome','  │  ');
+  const head = [S('dim',' DB '), S('','evidence_store.db'), sep, S('','92,879 items'), sep, S('dim','chain ')];
+  if (s.chain === 'tamper') return [...head, S('tamper','✖ TAMPER'), S('dim',' · event #4 · 14:02')];
+  if (s.chain === 'stale')  return [...head, S('warn','◐ STALE'), S('dim',' · '), S('warn','3 new'), S('dim',' since 14:02')];
+  return [...head, S('ok','● CLEAN'), S('dim',' · verified 14:02')];
+}
+function menuScreen(s, W, H){
+  const proposed = s.look !== 'current';
+  const lines = [];
+  const mode = proposed ? logoMode(s.rows) : 'none';
+  if (mode !== 'none'){ lines.push(...LOGOS[s.logo][mode]); lines.push([]); }
+  if (proposed){ lines.push(statusLine(s)); if (s.rows >= 16){ lines.push([S('chrome','─'.repeat(W))]); lines.push([]); } }
+  MENU.forEach((label, i) => {
+    const sel = i === s.menuSel, digit = String(i + 1);
+    const row = sel ? selLine([S('', `▸ ${digit}  ${label}`)])
+                    : [S('',' '), S('', ' '), S('dim', digit), S('', '  ' + label)];
+    lines.push(row);
+  });
+  lines.push([]);
+  lines.push(hint('↑/↓ navigate   1-9,0 jump   Enter select   Esc/q quit'));
+  return {title:'Verifiable Chain-of-Custody — Interactive Shell', lines, bc: proposed ? ({ok:'chrome', warn:'warn', tamper:'btamper'})[stateColor(s)] : 'chrome'};
+}
+function pinBottom(lines, last, H){
+  const out = lines.slice(0, H - 1); while (out.length < H - 1) out.push([]); out.push(last); return out;
+}
+function inputBox(W, text, focus){
+  const bc = focus ? 'accent' : 'chrome', inner = W - 2;
+  return [
+    [S(bc,'┌' + '─'.repeat(inner) + '┐')],
+    [S(bc,'│'), ...fit([S('',' ' + text), S('cursor',' ')], inner), S(bc,'│')],
+    [S(bc,'└' + '─'.repeat(inner) + '┘')]
+  ];
+}
+const PATHS = ['samples\\disk_image.E01','samples\\usb_dump.bin','samples\\case_notes\\','samples\\firmware.bin','samples\\router_config.txt'];
+function pathScreen(s, W, H){
+  const typed = 'samples\\';
+  const matches = PATHS.filter(p => p.startsWith(typed));
+  const lines = [[S('',' Add evidence: file or folder path')], ...inputBox(W, typed, true)];
+  matches.forEach((p, i) => {
+    const row = [S('', ` ${i === s.pathSel ? '▸' : ' '} ${p}`)];
+    lines.push(i === s.pathSel ? selLine(row) : row);
+  });
+  return {title:'Add evidence', lines:pinBottom(lines, hint(' ↑/↓ select   Enter confirm   Esc cancel'), H), bc:'chrome'};
+}
+function ingestScreen(s, W, H, t){
+  const total = 1800000000, n = 214, phaseA = 8, phaseB = 10;
+  const p = Math.min(1, t / phaseA), done = p * total, i = Math.max(1, Math.ceil(p * n));
+  const lines = [[], [S('',' '), S('', ' Adding evidence...')], []];
+  const fileNo = String(i).padStart(4, '0');
+  if (t >= phaseA){
+    lines.push([S('','  All 214 file(s) hashed (1.8 GB).')], [S('','  Recording to the database...')]);
+    if (s.look !== 'current') lines.push([], bar(1, W, true));
+  } else {
+    lines.push([S('',`  Hashing file ${i} of ${n}`)], [S('',`    case_notes/img_${fileNo}.jpg (8.2 MB)`)]);
+    if (s.look !== 'current') lines.push(bar(p, W, false));
+    const rate = t > 0.2 ? done / t : 0, left = rate ? (total - done) / rate : 0;
+    lines.push([S('',`  ${fmtBytes(done)} of ${fmtBytes(total)} (${Math.floor(p*100)}%)   ${fmtBytes(rate)}/s   about ${left.toFixed(1)} s left`)]);
+  }
+  lines.push([], [S('',`  ${t.toFixed(1)} s`)]);
+  return {title:'Add evidence', lines, bc:'chrome'};
+}
+function bar(p, W, finished){
+  const w = 40, f = Math.round(p * w);
+  return [S('','  '), S('chrome','['), S(finished ? 'ok' : 'accent','■'.repeat(f)), S('chrome','□'.repeat(w - f)), S('chrome',']'),
+          S(finished ? 'ok' : '', `  ${Math.floor(p*100)}%`)];
+}
+function summaryScreen(s, W, H){
+  const L = [
+    [],
+    [S('dim','Merkle root: '), S('', hex('root').slice(0, 48) + '…')],
+    [],
+    [S('accent','Summary')],
+    cz('  Files recorded : 214 (1.8 GB)'),
+    cz('  Total time     : 8.4 s  (25 files/s, 230.1 MB/s)'),
+    cz('  Custody event  : logged (batch-register)')
+  ];
+  L[0] = s.look === 'current' ? [S('','Registered folder case_notes: 214 file(s)')] : [S('ok','Registered'), S('',' folder case_notes: 214 file(s)')];
+  return {title:'Add evidence', lines:pinBottom(L, hint(' ↑/↓/PgUp/PgDn scroll   any other key returns to menu'), H), bc:'chrome'};
+}
+function checkScreen(s, W, H){
+  const L = [
+    [S('b','EV003'), S('','  firmware.bin')],
+    cz('  recorded sha256 : ' + hex('EV003').slice(0, 40) + '…'),
+    cz('  re-hash         : OK (matches recorded sha256)'),
+    cz('  custody log     : logged (entry #3, signature VALID)')
+  ];
+  if (s.chain === 'tamper'){ L[2] = cz('  re-hash         : MISMATCH, file changed since registration'); L.push([], cz('  verdict         : TAMPER DETECTED')); }
+  return {title:'Check evidence integrity', lines:pinBottom(L, hint(' ↑/↓/PgUp/PgDn scroll   any other key returns to menu'), H), bc:'chrome'};
+}
+function rootScreen(s, W, H){
+  const L = [[S('dim','Merkle root over 5 leaf(ves)/folder(s):')], [S('', hex('merkle'))]];
+  return {title:'Merkle root', lines:pinBottom(L, hint(' ↑/↓/PgUp/PgDn scroll   any other key returns to menu'), H), bc:'chrome'};
+}
+function matchEvidence(q){ q = q.toLowerCase(); return EVIDENCE.filter(e => !q || e.id.toLowerCase().includes(q) || e.name.toLowerCase().includes(q)); }
+function searchScreen(s, W, H, t, multi){
+  const res = matchEvidence(s.query), sel = Math.min(s.searchSel, Math.max(res.length - 1, 0));
+  const lines = [[S('',' Query:')], ...inputBox(W, s.query, true)];
+  if (!res.length) lines.push([S('dim','  (no matches)')]);
+  res.forEach((e, i) => {
+    const mark = multi ? (s.checked.has(e.id) ? '[x] ' : '[ ] ') : '';
+    const txt = `${i === sel ? '▸' : ' '} ${mark}${e.id}  ${e.name}`;
+    const row = [S('', ' ' + txt), S('dim', '  ' + e.size)];
+    lines.push(i === sel ? selLine(row) : row);
+  });
+  const h = multi ? ' ↑/↓ select   Space toggle   Enter confirm   Ctrl-R/F5 refresh   Esc cancel' : ' ↑/↓ select   Enter choose   Ctrl-R/F5 refresh   Esc cancel';
+  return {title: multi ? 'Search / Browse Evidence (multi-select)' : 'Search / Browse Evidence', lines:pinBottom(lines, hint(h), H), bc:'chrome'};
+}
+function actorScreen(s, W, H){
+  const lines = [[S('',' Log custody event: Actor:')], ...inputBox(W, s.actor, true)];
+  return {title:'Log custody event', lines:pinBottom(lines, hint(' Enter confirm   Esc cancel'), H), bc:'chrome'};
+}
+function confirmScreen(s, W, H){
+  return {title:'', lines:[[S('',' Log a custody event for this folder? '), S('dim','['), S('accent','y'), S('dim','/N]: ')]], bc:'chrome'};
+}
+function loadingScreen(s, W, H, t){
+  const lines = [[], [S('','  Verifying custody chain...')], [], [S('','  Reading 8,901 custody events')]];
+  if (s.look !== 'current'){
+    const w = 40, head = Math.floor((t * 14) % (w + 8)) - 8, cells = [];
+    for (let i = 0; i < w; i++) cells.push(i >= head && i < head + 8 ? S('accent','■') : S('chrome','·'));
+    lines.push([S('','  '), S('chrome','['), ...cells, S('chrome',']')]);
+  }
+  lines.push([], [S('',`  ${t.toFixed(1)} s`)]);
+  return {title:'Verify Chain', lines, bc:'chrome'};
+}
+function chainRows(s){
+  return EVENTS.map((e, i) => {
+    const bad = s.chain === 'tamper' && i >= TAMPER_AT && i <= TAMPER_AT + 1;
+    const target = e.e.length > 1 ? `[${e.e.join(', ')}]` : e.e[0];
+    return `${bad ? 'TAMPER  ' : 'OK  '}#${i} ${e.a} on ${target}`;
+  });
+}
+function chainDetails(s){
+  return EVENTS.map((e, i) => {
+    const bad = s.chain === 'tamper' && i >= TAMPER_AT && i <= TAMPER_AT + 1, first = s.chain === 'tamper' && i === TAMPER_AT;
+    const L = [`entry: #${i} ${e.a}`, `evidence_ids: ${e.e.join(', ')}`, `actor: ${e.who}`, `timestamp: ${e.ts}`, `prev_hash: ${hex('h' + (i-1))}`];
+    if (first) L.push(`recorded: ${hex('rec'+i)}`, `recomputed: ${hex('h'+i)}`, 'signature: INVALID', `hash link: TAMPER, chain breaks at #${i}`, 'status: TAMPER DETECTED');
+    else if (bad) L.push(`entry_hash: ${hex('h'+i)}`, 'signature: VALID', `hash link: TAMPER, prev entry #${i-1} altered`, 'status: TAMPER');
+    else L.push(`entry_hash: ${hex('h'+i)}`, 'signature: VALID', i ? `hash link: OK, matches entry #${i-1}` : 'hash link: OK, first entry', 'status: OK');
+    return L;
+  });
+}
+function evidenceRows(s){
+  const rows = EVIDENCE.slice(0, 5).map(e => `${s.chain === 'tamper' && e.id === 'EV002' ? '!! ' : 'OK '}${e.id}  (${e.name.split(' ')[0]})`);
+  rows.push('--  Merkle root over all evidence'); return rows;
+}
+function evidenceDetails(s){
+  const d = EVIDENCE.slice(0, 5).map(e => {
+    const bad = s.chain === 'tamper' && e.id === 'EV002';
+    return [`evidence_id: ${e.id}`, `original_filename: ${e.name.split(' ')[0]}`, `recorded sha256: ${hex(e.id)}`, 'source_path: D:\\case\\' + e.name.split(' ')[0],
+      bad ? 're-hash: MISMATCH, file changed since registration' : 're-hash: OK (matches recorded sha256)', bad ? 'custody log: logged, but entry #4 TAMPER' : 'custody log: logged']; });
+  d.push(['Recomputed root over 5 evidence file(s):', hex('merkle')]); return d;
+}
+function merkleRows(s){ return ['Root over 5 leaf(ves)/folder(s)', `${s.chain === 'tamper' ? 'TAMPER' : 'OK'}  proof.json (EV003)`]; }
+function merkleDetails(s){
+  const bad = s.chain === 'tamper';
+  return [['Recomputed Merkle root (from evidence store, independent implementation):', hex('merkle')],
+    ['evidence_id: EV003', `leaf: ${hex('EV003')}`, `claimed root: ${hex(bad ? 'forged' : 'merkle')}`, bad ? 'DOES NOT MATCH claimed root -- TAMPER DETECTED' : 'MATCHES claimed root']];
+}
+function sidebarDetail(s, W, H, opt){
+  const rows = opt.rows(s), details = opt.details(s);
+  const sel = Math.min(s.sideSel, rows.length - 1);
+  const top = opt.tabs ? 2 : 0, bodyH = H - top - 2, sideW = 40, detW = W - sideW - 1;
+  const lines = [];
+  if (opt.tabs){
+    const bar = [];
+    TABS.forEach((n, i) => bar.push(i === opt.tab ? S('accent', `[ ${n} ]`) : S('dim', `  ${n}  `)));
+    lines.push(bar, [S('chrome','─'.repeat(W))]);
+  }
+  const dRows = []; details[sel].forEach(ln => wrap(cz(ln), detW).forEach(r => dRows.push(r)));
+  const footer = rows.length > bodyH, vis = footer ? bodyH - 1 : bodyH;
+  const start = Math.max(0, Math.min(sel - Math.floor(vis / 2), rows.length - vis));
+  for (let r = 0; r < bodyH; r++){
+    let left;
+    if (footer && r === bodyH - 1) left = [S('dim', `  ${sel + 1}/${rows.length}`)];
+    else {
+      const idx = start + r;
+      if (idx < rows.length){
+        const mark = idx === sel ? '▸' : ' ';
+        left = idx === sel ? selLine([S('', mark + ' '), ...czRow(rows[idx])]) : [S('', mark + ' '), ...czRow(rows[idx])];
+      } else left = [];
+    }
+    const l = fit(left, sideW, left.pad);
+    lines.push([...l, S('chrome','│'), ...(dRows[r] || [])]);
+  }
+  lines.push([S('chrome','─'.repeat(W))], hint(opt.help));
+  return {title:opt.title, lines, bc:'chrome'};
+}
+const vchainScreen = (s, W, H) => sidebarDetail(s, W, H, {title:'Verify Chain', rows:chainRows, details:chainDetails, help:' ↑/↓ select   Ctrl-R/F5 refresh   Esc/q back'});
+const VT_HELP = ' Tab/←→ switch section   1-3 jump   ↑/↓ select   Ctrl-R/F5 refresh   Esc/q back';
+const vtScreen = tab => (s, W, H) => sidebarDetail(s, W, H, {title:'Verification', tabs:true, tab, help:VT_HELP,
+  rows:[chainRows, evidenceRows, merkleRows][tab], details:[chainDetails, evidenceDetails, merkleDetails][tab]});
+
+const SCREENS = [
+  {id:'menu',    label:'Main menu',            grp:'Home',           fn:menuScreen},
+  {id:'path',    label:'Path prompt',          grp:'Add evidence',   fn:pathScreen},
+  {id:'ingest',  label:'Hashing (loading)',    grp:'Add evidence',   fn:ingestScreen, anim:true, still:4.8},
+  {id:'summary', label:'Summary',              grp:'Add evidence',   fn:summaryScreen},
+  {id:'search',  label:'Search evidence',      grp:'Search & forms', fn:searchScreen},
+  {id:'multi',   label:'Multi-select search',  grp:'Search & forms', fn:(s,W,H,t)=>searchScreen(s,W,H,t,true)},
+  {id:'actor',   label:'Text prompt',          grp:'Search & forms', fn:actorScreen},
+  {id:'confirm', label:'Confirm y/N',          grp:'Search & forms', fn:confirmScreen},
+  {id:'check',   label:'Check result',         grp:'Command output', fn:checkScreen},
+  {id:'root',    label:'Merkle root',          grp:'Command output', fn:rootScreen},
+  {id:'loading', label:'Loading (waiting)',    grp:'Verification',   fn:loadingScreen, anim:true, still:1.2},
+  {id:'vchain',  label:'Verify chain',         grp:'Verification',   fn:vchainScreen},
+  {id:'vt0',     label:'Verification · Chain', grp:'Verification',   fn:vtScreen(0)},
+  {id:'vt1',     label:'Verification · Evidence', grp:'Verification', fn:vtScreen(1)},
+  {id:'vt2',     label:'Verification · Merkle',grp:'Verification',   fn:vtScreen(2)}
+];
+const byId = id => SCREENS.find(x => x.id === id);
+const TAMPER_ROW = {vchain:4, vt0:4, vt1:1, vt2:1};   /* the row that carries the verdict when Chain state = Tamper */
+const withTamperRow = s => (s.chain === 'tamper' && TAMPER_ROW[s.screen] !== undefined ? {...s, sideSel:TAMPER_ROW[s.screen]} : s);
+
+const NOTES = {
+  menu:{keys:'↑ ↓ move · 1–9 jump · Enter open · Esc/q quit', changes:[
+    '<b>Logo</b> sits above the menu and collapses with terminal height: full at 24+ rows, one line at 16–23, none below 16. Try the Rows control.',
+    '<b>Status header</b> shows DB, item count and the <i>last known</i> chain result. The frame border follows it (grey, amber, red). Try Chain state.',
+    'Menu text is untouched. The selected row gets a tint, digits go dim.']},
+  path:{keys:'↑ ↓ pick a match · Enter confirm · Esc cancel', changes:[
+    'The input frame turns <b>accent</b> while it has focus; every other frame stays grey chrome.',
+    'The block cursor and the selected completion use the same tint as the menu.']},
+  ingest:{keys:'Keys are ignored while it runs, as today', changes:[
+    '<b>Block progress bar</b> is new: accent while hashing, green when every file is hashed. Today the screen has only the percentage line.',
+    'Bar width and fill come from the percentage already computed in <code>_IngestProgress.text()</code>, so the 10 Hz redraw stays cheap.',
+    'Switch Look to Current to compare.']},
+  summary:{keys:'Any key returns to the menu', changes:[
+    'Labels dim, <b>Summary</b> in accent, <code>logged</code> green, <code>NOT logged</code> amber.',
+    'New rules in <code>colorize</code>, still text-only: the words are unchanged.']},
+  search:{keys:'Type to filter · ↑ ↓ · Enter choose · Esc cancel', changes:[
+    'Live filter is unchanged. Only the frame, cursor, selection tint and dim sizes are styled.']},
+  multi:{keys:'Type to filter · Space toggles · Enter confirm', changes:[
+    '<code>[x]</code> / <code>[ ]</code> stay as text; checked rows can also read accent without changing a character.']},
+  actor:{keys:'Type · Enter confirm · Esc cancel', changes:['Same input frame as the path prompt.']},
+  confirm:{keys:'y confirms · anything else cancels', changes:['The <b>y</b> is the only accented character; <code>[y/N]</code> brackets dim.']},
+  check:{keys:'Any key returns to the menu', changes:[
+    'With Chain state = Tamper the verdict line goes red and bold; the words <code>MISMATCH</code> and <code>TAMPER DETECTED</code> carry the meaning on any terminal.']},
+  root:{keys:'Any key returns to the menu', changes:['Hash is plain; the label is dim.']},
+  loading:{keys:'Keys are ignored while it runs', changes:[
+    'Indeterminate bar for work with no percentage. Same screen, same elapsed clock, same no-flash hand-off to the next screen.']},
+  vchain:{keys:'↑ ↓ select · Esc/q back', changes:[
+    '<code>OK</code> green, <code>TAMPER</code> red and bold. Try Chain state = Tamper and select entry #4.',
+    'Selected row keeps its verdict color on the tint themes; on High contrast / Plain the row reverses.']},
+  vt0:{keys:'Tab/← → switch section · 1–3 jump · ↑ ↓ select · Esc/q back (Tab is captured here; click outside to leave)', changes:[
+    'The active section is <b>accent</b> in brackets, the others dim. Detail labels dim, verdicts colored.',
+    'Existing issue, kept as is: this help line is 79 characters and the frame leaves 78, so an 80-column terminal clips its last letter today. Worth shortening to <code>Tab/←→ section   1-3 jump ...</code>.']},
+  vt1:{keys:'Tab/← → switch section · 1–3 jump · ↑ ↓ select · Esc/q back', changes:['<code>!!</code> rows and <code>MISMATCH</code> turn red when a file no longer matches.']},
+  vt2:{keys:'Tab/← → switch section · 1–3 jump · ↑ ↓ select · Esc/q back', changes:['<code>MATCHES claimed root</code> green, <code>DOES NOT MATCH ... TAMPER DETECTED</code> red.']}
+};
+
+/* ---------- rendering ---------- */
+const COLS = 80;
+function tFor(s, def, live){ return live ? (performance.now() - st.t0) / 1000 : (def.still || 0); }
+function buildTerm(s, def, live, custom){
+  const rows = custom?.rows || s.rows, W = COLS - 2, H = rows - 2;
+  let t = custom ? 0 : tFor(s, def, live);
+  if (def && def.anim && live){
+    const span = def.id === 'ingest' ? 10 : 3.2;
+    if (t >= span){ if (st.flow) return null; st.t0 = performance.now(); t = 0; }
+  }
+  const out = custom || def.fn(s, W, H, t);
+  const lines = frameLines(out.lines, COLS, rows, out.title, out.bc);
+  return {html: toHTML(lines, s.ascii), p: palFor(s)};
+}
+function termInner(s, p, html){ return `<div class="termwrap" data-selmode="${p.selmode}" style="${varsFor(p)}"><pre class="term">${html}</pre></div>`; }
+function termBox(s, {label, cap, def, custom, live, id}){
+  const d = def || byId(s.screen), b = buildTerm(s, d, live, custom) || buildTerm(s, d, false, custom);
+  return `<figure class="termbox"><div class="termbar"><i></i><i></i><i></i><span>${esc(label || 'python cli.py shell')}</span></div>`
+    + `<div ${id ? `id="${id}" tabindex="0" role="application" aria-label="Simulated terminal. Use arrow keys, Enter and Escape."` : ''}>${termInner(s, b.p, b.html)}</div>`
+    + (cap ? `<figcaption>${cap}</figcaption>` : '') + '</figure>';
+}
+
+const THEMES = [['dark','Dark','Default. Gray chrome, amber accent.'],['light','Light','For light-background terminals.'],['hc','High contrast','Pure colors, reverse video for selection and TAMPER.'],['plain','Plain (NO_COLOR)','Bold, dim and reverse only.']];
+const LOOKS = [['current','Current'],['new','Proposed']];
+
+function seg(id, label, opts, val){
+  return `<div class="ctl"><span>${label}</span><div class="seg" role="group" aria-label="${label}" data-ctl="${id}">${opts.map(([v,l]) => `<button type="button" data-v="${v}" aria-pressed="${String(v) === String(val)}">${l}</button>`).join('')}</div></div>`;
+}
+function drawControls(){
+  const dis = st.look === 'current';
+  $('#controls').innerHTML =
+    seg('look','Look', LOOKS, st.look)
+  + seg('theme','Theme', THEMES.map(t => [t[0], t[1]]), st.theme)
+  + seg('ascii','Glyphs', [[false,'Unicode'],[true,'ASCII']], st.ascii)
+  + seg('depth','Color depth', [[24,'Truecolor / 256'],[16,'16 colors']], st.depth)
+  + seg('rows','Terminal rows', [[30,'30'],[24,'24'],[20,'20'],[15,'15']], st.rows)
+  + seg('chain','Chain state', [['clean','Clean'],['stale','Stale'],['tamper','Tamper']], st.chain)
+  + seg('logo','Logo', Object.entries(LOGOS).map(([k,v]) => [k, v.name]), st.logo);
+  $('#controls').classList.toggle('dim', dis);
+}
+const VIEWS = [['sim','Simulator'],['themes','Themes'],['fallbacks','Fallbacks'],['logo','Logo & sizes'],['palette','Palette & rules']];
+function drawTabs(){
+  $('#tabs').innerHTML = VIEWS.map(([id, l]) => `<button role="tab" type="button" data-view="${id}" aria-selected="${st.view === id}">${l}</button>`).join('');
+}
+function screenPicker(){
+  return `<label class="pick"><span>Screen</span><select id="scr">${SCREENS.map(x => `<option value="${x.id}" ${x.id === st.screen ? 'selected' : ''}>${x.grp} · ${x.label}</option>`).join('')}</select></label>`;
+}
+function viewSim(){
+  const groups = []; SCREENS.forEach(x => { let g = groups.find(y => y.n === x.grp); if (!g) groups.push(g = {n:x.grp, items:[]}); g.items.push(x); });
+  const nav = groups.map(g => `<h3>${g.n}</h3>` + g.items.map(x => `<button type="button" data-go="${x.id}" aria-current="${x.id === st.screen}">${x.label}</button>`).join('')).join('');
+  const keys = [['↑','ArrowUp'],['↓','ArrowDown'],['←','ArrowLeft'],['→','ArrowRight'],['Tab','Tab'],['Enter','Enter'],['Space',' '],['Esc','Escape']];
+  return `<div class="sim"><nav class="screens" aria-label="Screens">${nav}</nav><div class="stage">`
+    + termBox(st, {label:'python cli.py shell', live:true, id:'sim'})
+    + `<div class="keys" aria-label="On-screen keys">${keys.map(([l,k]) => `<button type="button" data-key="${k}">${l}</button>`).join('')}<span class="status" id="msg" aria-live="polite"></span></div>`
+    + `<div class="notes" id="notes"></div></div></div>`;
+}
+function drawNotes(){
+  const n = NOTES[st.screen]; if (!n) return;
+  $('#notes').innerHTML = `<section><h3>What the new look changes</h3><ul>${n.changes.map(c => `<li>${c}</li>`).join('')}</ul></section><section><h3>Keys on this screen</h3><p style="margin:8px 0 0;color:var(--muted)">${n.keys}</p></section>`;
+}
+function viewThemes(){
+  return `<div class="viewhead"><div class="lead"><h2>Four themes, same screen</h2><p>Choose the screen below. Glyphs, color depth and rows follow the controls above. Unlike a webpage, a terminal theme only recolors; it never moves a character.</p></div>${screenPicker()}</div>`
+    + `<div class="grid2">${THEMES.map(([id, name, cap]) => termBox(withTamperRow({...st, theme:id, look:'new'}), {label:name, cap:`<b>${name}.</b> ${cap}`})).join('')}</div>`;
+}
+function viewFallbacks(){
+  const cases = [
+    {label:'Windows Terminal · truecolor', s:{theme:'dark', depth:24, ascii:false}, cap:'<b>Full look.</b> Detected: <code>WT_SESSION</code> set, UTF-8, truecolor.'},
+    {label:'Legacy cmd.exe · 16 colors · ASCII', s:{theme:'dark', depth:16, ascii:true}, cap:'<b>ANSI colors, ASCII glyphs.</b> Triggered by Windows without WT_SESSION / ConEmu. Force with <code>VCOC_ASCII=1</code>.'},
+    {label:'Linux console (TERM=linux) · ASCII', s:{theme:'dark', depth:16, ascii:true, pal:VT}, cap:'<b>VT palette, ASCII glyphs.</b> Triggered by <code>TERM=linux</code> or a non-UTF-8 locale.'},
+    {label:'NO_COLOR=1', s:{theme:'plain', depth:24, ascii:false}, cap:'<b>Attributes only.</b> No color; bold, dim and reverse remain. <code>OK</code> / <code>TAMPER</code> are still words.'}
+  ];
+  const glyphs = Object.entries(ASCII).map(([u, a]) => `<span class="chip"><code>${u}</code> → <code>${esc(a)}</code></span>`).join('');
+  return `<div class="viewhead"><div class="lead"><h2>Degradation on real consoles</h2><p>The ASCII swap happens when text is displayed, never inside the string renderers, so existing tests see the same characters on every OS. Pick a screen; chain state and rows follow the controls.</p></div>${screenPicker()}</div>`
+    + `<div class="grid2">${cases.map(c => termBox(withTamperRow({...st, look:'new', ...c.s}), {label:c.label, cap:c.cap})).join('')}</div>`
+    + `<section class="lead"><h3>Glyph map used by the fallback</h3><div class="chips">${glyphs}</div></section>`;
+}
+function viewLogo(){
+  const specimens = Object.entries(LOGOS).map(([k, v]) => {
+    const lines = [[], ...v.full, [], ...v.one, []];
+    const custom = {rows:lines.length + 2, title:'', lines, bc:'chrome'};
+    return termBox({...st, look:'new', logo:k}, {label:`Logo: ${v.name}`, custom, cap:`<b>${v.name}.</b> ${k === 'chain' ? 'The hash chain itself.' : k === 'shield' ? 'A trust mark; reads as a product badge. <b>Selected.</b>' : 'Linked ledger blocks; closest to the Merkle / chain story.'}`});
+  }).join('');
+  const sizes = [24, 20, 15].map(r => termBox({...st, look:'new', screen:'menu', rows:r}, {label:`${r} rows`, custom:null, def:byId('menu'),
+    cap:`<b>${r} rows:</b> ${logoMode(r) === 'full' ? 'full three-line logo' : logoMode(r) === 'one' ? 'one-line logo' : 'no logo; every item and the hint still fit'}.`})).join('');
+  return `<div class="viewhead"><div class="lead"><h2>Logo options</h2><p>All three are built from characters, so they work in any terminal and can be turned into ASCII. The Logo control above applies your pick everywhere.</p></div></div>`
+    + `<div class="grid2">${specimens}</div>`
+    + `<div class="viewhead"><div class="lead"><h2>Collapse by terminal height</h2><p>The menu and its hint must always fit, so the logo gives way first.</p></div></div><div class="grid2">${sizes}</div>`;
+}
+function viewPalette(){
+  const roles = [['chrome','Frame, rules, separators'],['dim','Hints, labels, secondary text'],['accent','Brand: selection, active tab, progress fill, logo'],['ok','OK, CLEAN, done'],['tamper','TAMPER, MISMATCH (bold)'],['warn','STALE, NOT logged']];
+  const cols = [['dark','Dark',PAL.dark],['light','Light',PAL.light],['hc','High contrast',PAL.hc],['d16','Dark · 16 colors',{...PAL.dark,...D16.dark}],['l16','Light · 16 colors',{...PAL.light,...D16.light}]];
+  const cell = (p, role) => {
+    const fgc = p[role], bgc = role === 'tamper' && p.tamperbg !== 'transparent' ? p.tamperbg : p.bg;
+    const fg = role === 'tamper' && p.tamperbg !== 'transparent' ? p.tamper : p[role];
+    const ratio = contrast(fg, bgc), need = role === 'chrome' ? 3 : 4.5;
+    return `<div class="sw"><i style="background:${bgc};color:${fg}">Aa</i>${fgc}<small class="${ratio >= need ? 'pass' : 'fail'}">${ratio.toFixed(1)}:1${ratio >= need ? '' : ' !'}</small></div>`;
+  };
+  const rows = roles.map(([r, use]) => `<tr><td><code>${r}</code><br><small style="color:var(--muted)">${use}</small></td>${cols.map(c => `<td>${cell(c[2], r)}</td>`).join('')}</tr>`).join('');
+  const rules = [
+    ['<code>OK</code> · <code>VALID</code> · <code>logged</code> · <code>MATCHES claimed root</code>','ok'],
+    ['<code>TAMPER</code> · <code>INVALID</code> · <code>MISMATCH</code> · <code>!!</code> · <code>DOES NOT MATCH ...</code>','tamper, bold'],
+    ['<code>STALE</code> · <code>NOT logged</code>','warn'],
+    ['Leading <code>Label:</code> on a detail line','dim'],
+    ['Menu digit, hint descriptions, sizes','dim'],
+    ['Selected row (<code>▸</code>)','tint + accent text, or reverse on High contrast / 16 colors / Plain'],
+    ['Frame, rules, separators','chrome'],
+    ['<code>Summary</code>, active tab, progress fill, logo marks','accent']
+  ].map(([m, c]) => `<tr><td>${m}</td><td><code>${c}</code></td></tr>`).join('');
+  return `<div class="lead"><h2>Palette</h2><p>Ratios are text against its own background; the red <b class="fail">!</b> marks anything under 4.5:1 (3:1 for chrome, which is only lines). Truecolor / 256 uses the hex values. In 16 colors the terminal's own ANSI palette decides the final shade, so those hexes are typical, not exact.</p></div>`
+    + `<div class="tablewrap"><table><tr><th>Role</th>${cols.map(c => `<th>${c[1]}</th>`).join('')}</tr>${rows}</table></div>`
+    + `<div class="lead"><h2>Open issue</h2><p>On a white 16-color terminal, ANSI yellow and green fail contrast, so the Light 16-color preset uses ANSI blue as its accent. <code>warn</code> and <code>ok</code> still fall short there, and the terminal's own palette decides the exact shade. Verdicts stay readable because each carries its own word (<code>STALE</code>, <code>OK</code>) and glyph (<code>◐</code>, <code>●</code>); color only reinforces them.</p></div>`
+    + `<div class="lead"><h2>Rules <code>colorize()</code> will apply</h2><p>Matching is on the text that already exists. If a label changes, a color can disappear silently, so each screen gets one test that asserts its colored fragments.</p></div>`
+    + `<div class="tablewrap"><table><tr><th>When the text contains</th><th>Class</th></tr>${rules}</table></div>`;
+}
+function drawView(){
+  const v = $('#view');
+  v.innerHTML = st.view === 'sim' ? viewSim() : st.view === 'themes' ? viewThemes() : st.view === 'fallbacks' ? viewFallbacks() : st.view === 'logo' ? viewLogo() : viewPalette();
+  v.style.display = 'flex'; v.style.flexDirection = 'column'; v.style.gap = '20px';
+  if (st.view === 'sim'){ drawNotes(); $('#msg').textContent = st.msg; }
+  startTicker();
+}
+function updateSim(){
+  const el = $('#sim'); if (!el) return;
+  const def = byId(st.screen), b = buildTerm(st, def, true);
+  if (!b){ afterIngest(); return; }
+  el.innerHTML = termInner(st, b.p, b.html);
+}
+function redrawAll(){
+  const had = document.activeElement && document.activeElement.id === 'sim';
+  drawControls(); drawTabs(); drawView();
+  if (had){ const el = $('#sim'); if (el) el.focus(); }
+}
+
+/* ---------- navigation and keys ---------- */
+let ticker = null;
+function startTicker(){
+  clearInterval(ticker); ticker = null;
+  if (st.view === 'sim' && byId(st.screen).anim) ticker = setInterval(updateSim, 100);
+}
+function go(id, flow){
+  st.screen = id; st.flow = !!flow; st.t0 = performance.now(); st.sideSel = 0; st.msg = '';
+  if (id === 'search' || id === 'multi'){ st.query = ''; st.searchSel = 0; }
+  if (id === 'path') st.pathSel = 0;
+  if (st.view !== 'sim') st.view = 'sim';
+  redrawAll();
+}
+function afterIngest(){
+  const next = st.screen === 'ingest' ? 'summary' : st.nextAfterLoad || 'vchain';
+  go(next, false);
+}
+function press(k, shift){
+  const sc = st.screen, n = () => redrawSimOnly();
+  const vt = /^vt\d$/.test(sc);
+  if (sc === 'menu'){
+    if (k === 'ArrowUp') st.menuSel = (st.menuSel + MENU.length - 1) % MENU.length;
+    else if (k === 'ArrowDown') st.menuSel = (st.menuSel + 1) % MENU.length;
+    else if (/^[1-9]$/.test(k)) { st.menuSel = +k - 1; return launch(st.menuSel); }
+    else if (k === 'Enter') return launch(st.menuSel);
+    else if (k === 'q' || k === 'Escape'){ st.msg = 'Quit: the shell exits and your terminal comes back.'; return n(); }
+    else return;
+    return n();
+  }
+  if (sc === 'path'){
+    if (k === 'ArrowUp') st.pathSel = Math.max(0, st.pathSel - 1);
+    else if (k === 'ArrowDown') st.pathSel = Math.min(PATHS.filter(p => p.startsWith('samples\\')).length - 1, st.pathSel + 1);
+    else if (k === 'Enter') return go('ingest', true);
+    else if (k === 'Escape') return go('menu');
+    return n();
+  }
+  if (sc === 'ingest' || sc === 'loading'){ if ((k === 'ArrowLeft' || k === 'Escape') && !st.flow) return go('menu'); return; }
+  if (sc === 'summary' || sc === 'check' || sc === 'root'){ if (!['Shift','Control','Alt','Meta'].includes(k)) go('menu'); return; }
+  if (sc === 'search' || sc === 'multi'){
+    const res = matchEvidence(st.query);
+    if (k === 'ArrowUp') st.searchSel = Math.max(0, st.searchSel - 1);
+    else if (k === 'ArrowDown') st.searchSel = Math.min(res.length - 1, st.searchSel + 1);
+    else if (k === ' ' && sc === 'multi'){ const e = res[st.searchSel]; if (e) st.checked.has(e.id) ? st.checked.delete(e.id) : st.checked.add(e.id); }
+    else if (k === 'Enter') return go(sc === 'multi' ? 'actor' : 'check', true);
+    else if (k === 'Escape') return go('menu');
+    else if (k === 'Backspace') st.query = st.query.slice(0, -1);
+    else if (k.length === 1){ st.query += k; st.searchSel = 0; }
+    return n();
+  }
+  if (sc === 'actor'){
+    if (k === 'Enter') return go('confirm', true);
+    if (k === 'Escape') return go('menu');
+    if (k === 'Backspace') st.actor = st.actor.slice(0, -1); else if (k.length === 1) st.actor += k;
+    return n();
+  }
+  if (sc === 'confirm'){
+    if (k === 'y' || k === 'Y'){ go('menu'); st.msg = 'Custody event logged (illustrative).'; return redrawAll(); }
+    go('menu'); return;
+  }
+  if (sc === 'vchain' || vt){
+    const rows = sc === 'vchain' ? chainRows(st) : [chainRows, evidenceRows, merkleRows][+sc[2]](st);
+    if (k === 'ArrowUp') st.sideSel = Math.max(0, st.sideSel - 1);
+    else if (k === 'ArrowDown') st.sideSel = Math.min(rows.length - 1, st.sideSel + 1);
+    else if (k === 'Escape' || k === 'q') return go('menu');
+    else if (k === 'r' || k === 'F5'){ st.sideSel = 0; }
+    else if (vt){
+      const cur = +sc[2];
+      if (k === 'Tab' && !shift || k === 'ArrowRight') return go('vt' + ((cur + 1) % 3));
+      if (k === 'Tab' && shift || k === 'ArrowLeft') return go('vt' + ((cur + 2) % 3));
+      if (/^[1-3]$/.test(k)) return go('vt' + (+k - 1));
+    }
+    return n();
+  }
+}
+function launch(i){
+  if (i === 0) return go('path');
+  if (i === 1) return go('search');
+  if (i === 2) return go('multi');
+  if (i === 3){ st.nextAfterLoad = 'vchain'; return go('loading', true); }
+  if (i === 4) return go('root');
+  if (i === 5) return go('search');
+  if (i === 6) return go('actor');
+  if (i === 7){ st.nextAfterLoad = 'vt0'; return go('loading', true); }
+  st.msg = 'Quit: the shell exits and your terminal comes back.'; redrawSimOnly();
+}
+function redrawSimOnly(){ updateSim(); const m = $('#msg'); if (m) m.textContent = st.msg; if (st.view === 'sim') { drawNotes(); document.querySelectorAll('.screens button').forEach(b => b.setAttribute('aria-current', String(b.dataset.go === st.screen))); } }
+
+/* ---------- wiring ---------- */
+function $(s, r = document){ return r.querySelector(s); }
+document.addEventListener('click', e => {
+  const c = e.target.closest('[data-ctl] button'); if (c){
+    const id = c.parentElement.dataset.ctl, raw = c.dataset.v;
+    st[id] = id === 'ascii' ? raw === 'true' : (id === 'depth' || id === 'rows') ? +raw : raw;
+    if (id === 'chain' && raw === 'tamper' && TAMPER_ROW[st.screen] !== undefined) st.sideSel = TAMPER_ROW[st.screen];
+    st.t0 = performance.now(); return redrawAll();
+  }
+  const t = e.target.closest('[data-view]'); if (t){ st.view = t.dataset.view; return redrawAll(); }
+  const g = e.target.closest('[data-go]'); if (g){ go(g.dataset.go); const s = $('#sim'); if (s) s.focus(); return; }
+  const k = e.target.closest('[data-key]'); if (k){ press(k.dataset.key, false); const s = $('#sim'); if (s) s.focus(); }
+});
+document.addEventListener('change', e => { if (e.target.id === 'scr'){ st.screen = e.target.value; st.sideSel = 0; drawView(); } });
+document.addEventListener('keydown', e => {
+  const el = e.target.closest && e.target.closest('#sim'); if (!el || e.ctrlKey || e.metaKey || e.altKey) return;
+  const nav = ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter','Escape','Backspace',' '];
+  const tabHere = /^vt\d$/.test(st.screen);
+  if (nav.includes(e.key) || (e.key === 'Tab' && tabHere) || e.key.length === 1 || e.key === 'F5'){ e.preventDefault(); press(e.key, e.shiftKey); }
+});
+(function(){ /* #view-screen-state, e.g. #themes-vchain-tamper */
+  const h = location.hash.slice(1).split('-');
+  if (VIEWS.some(v => v[0] === h[0])) st.view = h[0];
+  if (h[1] && byId(h[1])) st.screen = h[1];
+  if (['clean','stale','tamper'].includes(h[2])) st.chain = h[2];
+})();
+redrawAll();
+</script>
+</body>
+</html>

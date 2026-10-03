@@ -19,11 +19,17 @@ import cli as cli_module
 import verifier as verifier_module
 from vcoc import db
 
+from . import status as chain_status
+from . import theme
 from .evidence_search import _add_jump_keys, _visible_height, window_text
 from vcoc.hash_chain import HashChain
 from vcoc.visualize import build_chain_view, format_entry_detail_lines
 
 TABS = ["Chain", "Evidence", "Merkle"]
+_SIDEBAR_WIDTH = 40  # the sidebar's widest column count; the selected row's tint is padded to it
+# Help lines must fit the 78 columns inside a frame on an 80-column terminal (tests/test_help_lines.py checks every HELP_*).
+HELP_SIDEBAR = " ↑/↓ select   PgUp/PgDn/Home/End jump   Ctrl-R/F5 refresh   Esc/q back"
+HELP_VERIFICATION = " Tab/←→ section   1-3 jump   ↑/↓ PgUp/PgDn   Ctrl-R refresh   Esc/q back"
 
 
 def _load_json(path: str) -> object | None:
@@ -66,6 +72,9 @@ def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[
         return ["No custody events logged yet"], [["The custody log is empty."]]
 
     per_entry = verifier_module.verify_each(entries, verifying_key)
+    chain_status.record_chain_check(
+        shell_config, os.path.abspath(cli_module.DEFAULT_DB), [v.ok for v in per_entry], [e["index"] for e in entries]
+    )
     chain_view = build_chain_view(entries)
 
     rows = []
@@ -366,7 +375,7 @@ def _run_sidebar_detail_app(
     load_rows: "callable[[], tuple[list[str], list[list[str]]]]",
     top_bar: "callable[[], str] | None" = None,
     extra_keybindings: "callable[[object], None] | None" = None,
-    help_text: str = " ↑/↓ select   PgUp/PgDn/Home/End jump   Ctrl-R/F5 refresh   Esc/q back",
+    help_text: str = HELP_SIDEBAR,
     slow_load: "tuple[callable[[], object | None], callable[[callable], tuple[list[str], list[list[str]]]]] | None" = None,
 ) -> None:
     # slow_load = (slow_key, load_with_progress). slow_key() returns a hashable key while the active tab is a slow tab
@@ -456,28 +465,37 @@ def _run_sidebar_detail_app(
     def _(event):
         event.app.exit()
 
+    shell_theme = theme.current()
+    rule, divider = theme.glyph("─", shell_theme), theme.glyph("│", shell_theme)
     top_rows = []
     if top_bar is not None:
-        top_rows = [Window(FormattedTextControl(top_bar), height=1), Window(height=1, char="─")]
+        top_rows = [
+            Window(FormattedTextControl(theme.styled(top_bar, "tabs")), height=1),
+            Window(height=1, char=rule, style="class:chrome"),
+        ]
 
     body = HSplit(
         [
             *top_rows,
             VSplit(
                 [
-                    Window(FormattedTextControl(render_sidebar), width=D(min=28, max=40)),
-                    Window(width=1, char="│"),
-                    Window(FormattedTextControl(render_detail), wrap_lines=True),
+                    Window(
+                        FormattedTextControl(theme.styled(render_sidebar, "sidebar", width=_SIDEBAR_WIDTH)),
+                        width=D(min=28, max=_SIDEBAR_WIDTH),
+                    ),
+                    Window(width=1, char=divider, style="class:chrome"),
+                    Window(FormattedTextControl(theme.styled(render_detail)), wrap_lines=True),
                 ]
             ),
-            Window(height=1, char="─"),
-            Window(FormattedTextControl(lambda: help_text), height=1),
+            Window(height=1, char=rule, style="class:chrome"),
+            Window(FormattedTextControl(theme.styled(lambda: help_text, "hint")), height=1),
         ]
     )
     app = Application(
         layout=Layout(Frame(body, title=title)),
         key_bindings=kb,
         full_screen=True,
+        style=theme.app_style(shell_theme),
     )
     holder.append(app)
     try:
@@ -544,7 +562,7 @@ def run_verification_screen(shell_config: dict | None = None) -> None:
             },
         ),
         extra_keybindings=add_tab_keybindings,
-        help_text=" Tab/←→ section   1-3 jump   ↑/↓ PgUp/PgDn/Home/End select   Ctrl-R/F5 refresh   Esc/q back",
+        help_text=HELP_VERIFICATION,
     )
 
 

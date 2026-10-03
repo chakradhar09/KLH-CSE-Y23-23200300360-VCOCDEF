@@ -50,24 +50,71 @@ python cli.py shell
 This is the primary way to use the system — an arrow-key-driven menu that covers every operation (registering evidence, logging custody events, verifying the chain, generating keys, etc.) without needing to type individual CLI flags. On first use it will prompt you to generate a signing keypair.
 
 ```
-┌─ Verifiable Chain-of-Custody — Interactive Shell ───────────────────┐
-│   ▸ 1  Add evidence                                                 │
-│     2  Check evidence integrity                                     │
-│     3  Log custody event                                            │
-│     4  Verify chain                                                 │
-│     5  Merkle root                                                  │
-│     6  Merkle proof                                                 │
-│     7  Generate keypair (init-keys)                                 │
-│     8  Verification (chain / evidence / merkle)                     │
-│     0  Quit                                                         │
-├──────────────────────────────────────────────────────────────────── │
-│ ↑/↓ navigate   1-8,0 jump   Enter select   Esc/q quit               │
-└──────────────────────────────────────────────────────────────────── ┘
+┌─────────────| Verifiable Chain-of-Custody — Interactive Shell |──────────────┐
+│  ╭─────╮                                                                     │
+│  │ ◆━◆ │  VCoC  Verifiable Chain-of-Custody                                  │
+│  ╰──▼──╯  for digital evidence files                                         │
+│                                                                              │
+│ DB vcoc.db  │  214 items  │  chain ● CLEAN · verified 22:40                  │
+│──────────────────────────────────────────────────────────────────────────────│
+│                                                                              │
+│▸ 1  Add evidence                                                             │
+│  2  Check evidence integrity                                                 │
+│  3  Log custody event                                                        │
+│  4  Verify chain                                                             │
+│  5  Merkle root                                                              │
+│  6  Merkle proof                                                             │
+│  7  Generate keypair                                                         │
+│  8  Verification (chain / evidence / merkle)                                 │
+│  9  Quit                                                                     │
+│                                                                              │
+│↑/↓ navigate   1-9,0 jump   Enter select   Esc/q quit                         │
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+The line under the logo is the **status header**. It reports the *last known* result of a chain verification on this
+machine; it never runs one. The result is saved in `shell_config.json` when Verify chain (or the Verification screen's
+Chain tab) finishes, together with how many custody events and evidence items existed at that moment:
+
+| Header | Meaning |
+|---|---|
+| `● CLEAN · verified 22:40` | Every custody event checked out, and nothing has been added since |
+| `◐ STALE · 3 new since 22:40` | Evidence or custody events were added after that verification: verify again |
+| `✖ TAMPER · event #4 · 22:40` | The last verification found a broken event (stays until the next verification) |
+| `○ not verified yet` | No verification has been run for this database from this shell |
+
+The menu frame turns amber when stale and red on tamper. The header is a convenience, not evidence: the authoritative
+checks are Verify chain, the Verification screen and the standalone `verifier.py`. It reads the database through a
+read-only connection (it never creates or changes it); measured on a database with 92,879 evidence rows it adds about
+2 ms the first time the menu appears in a session and under 0.1 ms afterwards.
 
 Evidence-scoped actions (Check evidence, Log custody event, Merkle proof) open a live
 search/filter picker instead of a blank text prompt — type a partial evidence ID or
 filename to narrow the list.
+
+#### Look and terminal support
+
+The shell colors verdicts (`OK` green, `TAMPER` bold red), tints the selected row, and shows a shield logo that
+collapses on short terminals (three lines from 24 rows, one line from 16, none below). Colors only reinforce the words;
+every verdict is also text, so nothing depends on seeing color. The look adapts to the terminal it finds:
+
+| Terminal | What it gets |
+|---|---|
+| Windows Terminal, VS Code, modern Windows 10/11 consoles, ConEmu, Git Bash | Unicode shapes, truecolor |
+| Linux/macOS terminals (`xterm-256color` and similar) | Unicode shapes, 256 colors |
+| 16-color terminals | Unicode shapes where the locale allows, basic ANSI colors |
+| Linux virtual console (`TERM=linux`) | ASCII shapes, bright ANSI colors (its "bright black" is nearly invisible) |
+| Windows older than 10 1809 without a modern terminal | ASCII shapes, basic ANSI colors |
+| `NO_COLOR` set, or a terminal without color | Bold and reverse only, no color codes |
+
+Settings (all optional): `VCOC_THEME=dark|light|high-contrast|plain` (default `dark`; use `light` on a light
+background), `NO_COLOR=1` (no color), `VCOC_ASCII=1` (force ASCII shapes) or `VCOC_ASCII=0` (force Unicode),
+`PROMPT_TOOLKIT_COLOR_DEPTH=DEPTH_4_BIT` (force a color depth). The palettes were checked for readability (at least
+4.5:1 for text, 3:1 for lines) against common terminal backgrounds such as Campbell, VS Code, One Dark, Ubuntu and
+Solarized; `tests/test_theme_matrix.py` simulates each terminal in the table above.
+
+Some help lines were shortened to fit an 80-column terminal, so they no longer mention every key. These keys also work:
+Home and End (first/last row) and F5 (refresh) on the Verification and search screens.
 
 **Multi-file custody events:** "Log custody event" lets you select more than one
 evidence record before confirming (Space toggles a row, Enter confirms the
@@ -130,7 +177,10 @@ Everything below explains what each menu option / underlying module actually doe
   - `forms.py` — guided input prompts (evidence file, actor, action, etc.) with filesystem path autofill.
   - `evidence_search.py` — live search/filter over the evidence table by partial ID or filename.
   - `verification_screen.py` — drives the "check evidence integrity" and "verify chain" menu options.
-  - `config.py` — reads/writes `shell_config.json`, which remembers key-pair paths between sessions.
+  - `config.py` — reads/writes `shell_config.json`, which remembers key-pair paths and the last chain-verification result between sessions.
+  - `theme.py` — the shell's look: palettes (dark, light, high-contrast, plain), the color rules that turn a screen's text into styled fragments without changing it, the ASCII fallback, the shield logo, the progress bar and marquee. Pure: no files, database or network.
+  - `status.py` — the main menu's status header: read-only database counts compared with the last recorded verification.
+  - `loading.py` — the full-screen "working" screen with live progress, the block progress bar and Esc-to-cancel.
 
 ### Entry points
 

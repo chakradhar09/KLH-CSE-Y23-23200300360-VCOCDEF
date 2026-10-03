@@ -329,6 +329,47 @@ those functions already print via `python cli.py <subcommand>`.
 
 ---
 
+## 8. The Style Layer (added after the SQLite single store)
+
+The shell's look is a layer over the text the screens already render; it adds no behavior. (Sections 2–6 above describe
+the original JSON-index design; the data layer is now one SQLite file, see `README.md`, but the screens are as described.)
+
+| Module | Role |
+|---|---|
+| `theme.py` | Pure (no files, database or network). Palettes, `colorize(text, kind)` rules, ASCII fallback, logo, progress bar, marquee, `ThemeLexer`. |
+| `status.py` | The main menu's header: read-only database counts compared with the last recorded verification. |
+| `config.py` | `shell_config.json`: key-pair paths and the `last_verify` record (written atomically). |
+
+```mermaid
+flowchart LR
+    ENV["environment:<br/>NO_COLOR, VCOC_THEME,<br/>VCOC_ASCII, TERM, color depth"] --> RESOLVE["theme.resolve_theme()<br/>run_shell, once"]
+    RESOLVE --> THEME[(current theme)]
+    SCREEN["screen renderer<br/>returns a str, unchanged"] --> STYLED["theme.styled(render, kind)"]
+    THEME --> STYLED
+    STYLED --> FRAGS["(style, text) fragments<br/>re-join to the same text"]
+    FRAGS --> PT["prompt_toolkit Application<br/>style = theme.app_style()"]
+    VERIFY["Verify chain / Chain tab"] -->|"record_chain_check"| CFG[(shell_config.json<br/>last_verify)]
+    CFG --> STATUS["status.current_status()<br/>once per menu"]
+    DB[(vcoc.db, read-only)] --> STATUS
+    STATUS --> HEADER["menu header + frame color"]
+```
+
+Rules that keep it safe:
+
+- **Text never changes.** `colorize` returns fragments that always re-join to the renderer's string (tested for every
+  renderer), so existing tests that pin the strings are unaffected. The only padding is spaces on the selected row.
+- **Color is never the only signal.** Every verdict is a word (`OK`, `TAMPER`, `STALE`); under `NO_COLOR` only bold and
+  reverse remain.
+- **The ASCII fallback happens at display time**, in `theme.for_display`, and widths never change. Frame borders are
+  swapped through a scoped patch of prompt_toolkit's `Border` glyphs that is restored when the shell exits.
+- **The header is a hint, not evidence.** It is read once each time the menu appears (never inside a redraw), through a
+  read-only connection that cannot create a database, and a failure just means no header. A tamper verdict outlives
+  anything added later, and anything added after a clean verification shows as stale.
+- **Cost is bounded by the visible rows.** Styling runs on the windowed text a screen already builds (about 0.04 ms per
+  redraw regardless of list size); the header adds about 2 ms once per session on 92,879 evidence rows.
+
+---
+
 ## References
 
 - `tasks/plan.md`, `tasks/todo.md` — implementation task breakdown

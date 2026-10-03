@@ -11,6 +11,8 @@ from prompt_toolkit.layout import Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import Frame
 
+from . import theme
+
 
 def loading_text(label: str, status: str | None, elapsed: float, hint: str | None = None) -> str:
     """The loading screen's text: label, optional live status lines, the elapsed-time clock, optional key hint."""
@@ -43,12 +45,13 @@ def run_with_loading(title: str, work, label: str = "Loading...", status=None, c
     cancelling = False
 
     def render() -> str:
+        elapsed = time.monotonic() - started
         try:
-            live = status() if status is not None else None
+            live = status() if status is not None else theme.marquee(elapsed)  # no status, no percentage: show a wait
         except Exception:
             live = None
         hint = None if cancel is None else "Cancelling... finishing the current file" if cancelling else "Esc cancels"
-        return loading_text(label, live, time.monotonic() - started, hint)
+        return loading_text(label, live, elapsed, hint)
 
     keys = KeyBindings()
 
@@ -59,7 +62,7 @@ def run_with_loading(title: str, work, label: str = "Loading...", status=None, c
             cancelling = True
             cancel()
 
-    control = FormattedTextControl(render)
+    control = FormattedTextControl(theme.styled(render, "loading"))
     workers: list[threading.Thread] = []
 
     with create_pipe_input() as no_keys:
@@ -69,6 +72,7 @@ def run_with_loading(title: str, work, label: str = "Loading...", status=None, c
             full_screen=True,
             input=None if cancel is not None else no_keys,
             refresh_interval=0.1,  # keeps the elapsed-time line ticking
+            style=theme.app_style(theme.current()),
         )
 
         def pre_run() -> None:

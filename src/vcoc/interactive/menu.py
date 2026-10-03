@@ -13,7 +13,7 @@ import cli as cli_module
 import verifier as verifier_module
 
 from . import config as config_module
-from . import forms
+from . import forms, theme
 from .evidence_search import search_evidence_db, search_evidence_multi_db
 from .loading import run_with_loading
 from .verification_screen import run_verification_screen, run_verify_chain_screen
@@ -75,6 +75,20 @@ class _IngestProgress:
     @property
     def hashed_bytes(self) -> int:
         return self._last[4] if self._last else 0
+
+    def fraction(self) -> float | None:
+        """Bytes hashed over bytes in total (1.0 for an empty folder); None until the first report. Never reads the clock."""
+        last = self._last
+        if last is None:
+            return None
+        done, total = last[4], last[5]
+        return min(done / total, 1.0) if total else 1.0
+
+    def screen_text(self) -> str:
+        """What the loading screen shows: `text()` unchanged, then a blank line and the block progress bar."""
+        text = self.text()
+        fraction = self.fraction()
+        return text if fraction is None else f"{text}\n\n{theme.progress_bar(fraction)}"
 
     def text(self) -> str:
         last = self._last
@@ -205,7 +219,7 @@ def action_add_evidence(shell_config: dict) -> None:
         "Hashing and registering the evidence...",
         cli_module.cmd_add_evidence,
         ns,
-        status=progress.text if progress is not None else None,
+        status=progress.screen_text if progress is not None else None,
         cancel=progress.cancel if progress is not None else None,
     )
     if progress is not None and progress.cancelled:
