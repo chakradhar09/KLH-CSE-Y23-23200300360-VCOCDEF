@@ -168,13 +168,17 @@ def _ingest_walked_folder(args, folder_id, folder_path, walk, file_count, total_
         print(f"Skipped {skipped} symlink/special entries.")
 
     # Streaming: one batch of Evidence, an O(log n) Merkle builder, and member_ids built by SQLite at the end.
-    # Opt-in process pool (--jobs / VCOC_HASH_JOBS): digests come back in walk order, so everything below is unchanged.
-    jobs = getattr(args, "jobs", None) or hashing.default_jobs()
+    # Process pool, sized by --jobs, else VCOC_HASH_JOBS, else automatically (half the CPUs, at most 8, from 2,000 files up):
+    # digests come back in walk order, so everything below is unchanged.
+    jobs = getattr(args, "jobs", None) or hashing.auto_jobs(file_count)
     pre = None
     if jobs > 1 and file_count >= hashing.PARALLEL_MIN_FILES:
         pre = hashing.hash_files(
             ((os.path.join(args.file, rel.replace("/", os.sep)), size) for rel, size in _iter_walk(walk)), jobs
         )
+    set_workers = getattr(progress, "set_workers", None)  # the shell's loading screen shows the count it is told
+    if set_workers is not None:
+        set_workers(jobs if pre is not None else 1)
     batch: list[Evidence] = []
     builder = MerkleRootBuilder()
     conn = None  # opened at the first flush, so a run that fails before then does not even create the database
@@ -465,7 +469,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--jobs",
         type=int,
         default=None,
-        help="Folder mode only: hash with this many worker processes (default 1, or $VCOC_HASH_JOBS)",
+        help="Folder mode only: hash with this many worker processes (default: $VCOC_HASH_JOBS, else half the CPUs, at most 8, "
+        "from 2,000 files up; 1 = single process)",
     )
     p.set_defaults(func=cmd_add_evidence)
 

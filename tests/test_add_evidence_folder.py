@@ -444,11 +444,16 @@ def test_ingest_memory_grows_little_per_file(tmp_path, monkeypatch):
     assert (large - small) / 2500 < 450  # bytes per extra file
 
 
-def test_ingest_memory_is_flat_in_the_number_of_files(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "jobs, small, large",
+    [(1, 1000, 6000), (2, 2500, 7500)],  # both sizes on the SAME path: the pool's fixed start-up cost is not per-file growth
+)
+def test_ingest_memory_is_flat_in_the_number_of_files(tmp_path, monkeypatch, jobs, small, large):
     """M1 (parked item): the sorted walk list was ~0.4 KB per file; the walk now lives in a temp database on disk."""
     import tracemalloc
 
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VCOC_HASH_JOBS", str(jobs))  # folder ingest sizes its own pool: pin it so the two sizes match
     monkeypatch.setattr(cli_module, "INGEST_BATCH_SIZE", 100)  # both sizes must be well past the (bounded) batches
     monkeypatch.setattr(cli_module, "WALK_BATCH_SIZE", 100)
 
@@ -467,10 +472,10 @@ def test_ingest_memory_is_flat_in_the_number_of_files(tmp_path, monkeypatch):
 
     peak_for(200, 0)  # warm-up: first-use allocations (lazy imports, caches) are not per-file growth
     # min of two runs: a run can also carry a fixed ~400 KB of cyclic garbage from elsewhere, unrelated to the file count
-    small = min(peak_for(1000, a) for a in (1, 2))
-    large = min(peak_for(6000, a) for a in (1, 2))
+    small_peak = min(peak_for(small, a) for a in (1, 2))
+    large_peak = min(peak_for(large, a) for a in (1, 2))
 
-    assert (large - small) / 5000 < 60  # bytes of Python heap per extra file
+    assert (large_peak - small_peak) / (large - small) < 60  # bytes of Python heap per extra file
 
 
 def test_ingest_order_is_plain_code_point_order_of_the_relative_paths(tmp_path, monkeypatch):

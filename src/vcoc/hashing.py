@@ -62,6 +62,17 @@ def default_jobs() -> int:
         return 1
 
 
+def auto_jobs(file_count: int) -> int:
+    """Pool size for a folder ingest: an explicit VCOC_HASH_JOBS wins (=1 turns the pool off); otherwise half the CPUs, at most
+    8 (~20 MiB per worker), and 1 below PARALLEL_MIN_FILES. The same rule as verifier.auto_jobs (verifier.py imports nothing
+    from vcoc, so it keeps its own copy: tests/test_parallel_hashing.py checks that the two agree)."""
+    if "VCOC_HASH_JOBS" in os.environ:
+        return default_jobs()
+    if file_count < PARALLEL_MIN_FILES:
+        return 1
+    return max(1, min(8, (os.cpu_count() or 1) // 2))
+
+
 def _hash_batch(paths: list[str]) -> list:
     out: list = []
     for path in paths:

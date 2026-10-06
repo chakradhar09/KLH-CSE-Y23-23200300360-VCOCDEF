@@ -153,14 +153,14 @@ rewrites it or cuts the log short, it no longer matches the copy you kept. To ch
 copy you kept) to the `verifier.py` command: it fails if the log was cut short or rewritten, and, together with
 `--evidence-index`, if the Merkle root changed. A log that only grew since the anchor still passes.
 
-**Many files, spare cores:** hashing is single-process by default (best on a basic machine). For a big folder on a
-multi-core machine with fast storage, `python cli.py add-evidence --file <folder> --evidence-id B1 --jobs 8` and
-`python verifier.py ... --jobs 8` hash in worker processes (or set `VCOC_HASH_JOBS=8`). Results are identical; on a
-416,000-file / 16.5 GB folder (warm cache, 32 CPUs) ingest went from 240 s to 40 s. It only starts above 2,000 files.
-The exception is the interactive shell's Verification > Evidence re-hash: with 2,000 or more evidence files it uses
-half your CPUs, at most 8 worker processes (about 20 MiB each), by itself; on a 419,900-file / 18.6 GB database (warm
-cache, 32 CPUs) that took 36 s with 8 workers instead of 203 s single-process (4 workers: 67 s). Set `VCOC_HASH_JOBS=1`
-to keep it single-process, or another number to choose the count. Every file is still re-hashed from disk; nothing is cached.
+**Many files, spare cores:** folder registration (Add evidence, `python cli.py add-evidence --file <folder>`) and the
+shell's Verification > Evidence re-hash choose their worker processes by themselves: with 2,000 or more files they use
+half your CPUs, at most 8 (about 20 MiB each); below that, or on a 1-3 CPU machine, they stay single-process. Results are
+identical. On a 420,557-file / 19.6 GB folder (warm cache, 32 CPUs) registering took 43 s with 8 workers (it was 240-450 s
+single-process), and re-hashing a 419,900-file database took 36 s instead of 203 s (4 workers: 67 s). The loading screens
+show the worker count and files per second. Set `VCOC_HASH_JOBS=1` (or `--jobs 1`) to keep a run single-process, or another
+number to choose the count; `python verifier.py ... --jobs N` (the standalone verifier) stays single-process unless asked.
+Every file is still re-hashed from disk; nothing is cached.
 
 Everything below explains what each menu option / underlying module actually does.
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import multiprocessing
+import os
 import sys
 from pathlib import Path
 
@@ -120,13 +121,13 @@ def test_closing_the_generator_stops_the_workers(tmp_path, monkeypatch):
 # --- folder ingest -------------------------------------------------------------------------------------------------
 
 
-def _ingest(tmp_path, name, jobs, monkeypatch, progress=None):
+def _ingest(tmp_path, name, jobs, monkeypatch, progress=None, min_files=1):
     folder = tmp_path / "case"
     if not folder.exists():
         for i in range(25):
             (folder / f"d{i % 3}").mkdir(parents=True, exist_ok=True)
             (folder / f"d{i % 3}" / f"f{i:02d}.bin").write_bytes(bytes([i]) * (i * 50))
-    monkeypatch.setattr(hashing, "PARALLEL_MIN_FILES", 1)
+    monkeypatch.setattr(hashing, "PARALLEL_MIN_FILES", min_files)
     monkeypatch.setattr(hashing, "BATCH_FILES", 4)
     ns = argparse.Namespace(
         file=str(folder), evidence_id="B1", db=str(tmp_path / f"{name}.db"), private_key=None, actor=None, jobs=jobs
@@ -151,14 +152,115 @@ def test_parallel_ingest_gives_exactly_the_sequential_result(tmp_path, monkeypat
     assert _snapshot(par) == _snapshot(seq)
 
 
-def test_parallel_ingest_is_off_unless_asked_for(tmp_path, monkeypatch):
-    monkeypatch.delenv("VCOC_HASH_JOBS", raising=False)
+def test_parallel_ingest_can_be_turned_off_with_vcoc_hash_jobs_1(tmp_path, monkeypatch):
+    # (Folder ingest used to be single-process unless asked: it now sizes its pool itself, and =1 is the off switch.)
+    monkeypatch.setenv("VCOC_HASH_JOBS", "1")
 
     def boom(*a, **k):
-        raise AssertionError("the process pool must not start by default")
+        raise AssertionError("the process pool must not start when VCOC_HASH_JOBS=1")
 
     monkeypatch.setattr(hashing, "hash_files", boom)
     _ingest(tmp_path, "default", None, monkeypatch)
+
+
+# --- folder ingest picks its workers by itself (same rule as the verification re-hash) ----------------------------------
+
+
+@pytest.mark.parametrize(
+    "env, count, cpus, expected",
+    [
+        ("3", 10, 32, 3),
+        ("banana", 400_000, 32, 1),
+        ("1", 400_000, 32, 1),
+        (None, 1_999, 32, 1),
+        (None, 2_000, 32, 8),
+        (None, 2_000, 16, 8),
+        (None, 2_000, 8, 4),
+        (None, 2_000, 4, 2),
+        (None, 2_000, 2, 1),
+        (None, 2_000, None, 1),
+    ],
+)
+def test_hashing_auto_jobs_follows_the_same_rule_as_the_verifier_and_the_two_copies_agree(monkeypatch, env, count, cpus, expected):
+    if env is None:
+        monkeypatch.delenv("VCOC_HASH_JOBS", raising=False)
+    else:
+        monkeypatch.setenv("VCOC_HASH_JOBS", env)
+    monkeypatch.setattr(os, "cpu_count", lambda: cpus)  # one os module: both copies see it
+
+    assert hashing.auto_jobs(count) == expected == verifier.auto_jobs(count)
+
+
+def _pool_sizes(monkeypatch):
+    sizes = []
+    real = hashing.hash_files
+    monkeypatch.setattr(hashing, "hash_files", lambda entries, jobs: sizes.append(jobs) or real(entries, jobs))
+    return sizes
+
+
+def test_folder_ingest_uses_the_pool_by_default_sized_from_the_cpus(tmp_path, monkeypatch):
+    monkeypatch.delenv("VCOC_HASH_JOBS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    sizes = _pool_sizes(monkeypatch)
+
+    _ingest(tmp_path, "auto", None, monkeypatch)
+
+    assert sizes == [4]
+
+
+def test_an_explicit_jobs_beats_the_automatic_size(tmp_path, monkeypatch):
+    monkeypatch.delenv("VCOC_HASH_JOBS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 32)
+    sizes = _pool_sizes(monkeypatch)
+
+    _ingest(tmp_path, "explicit", 2, monkeypatch)
+
+    assert sizes == [2]
+
+
+def test_a_small_folder_stays_single_process_without_any_setting(tmp_path, monkeypatch):
+    monkeypatch.delenv("VCOC_HASH_JOBS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 32)
+    sizes = _pool_sizes(monkeypatch)
+
+    _ingest(tmp_path, "small", None, monkeypatch, min_files=2_000)  # the 25-file folder is far below the minimum
+
+    assert sizes == []
+
+
+def test_the_automatic_pool_gives_exactly_the_sequential_result(tmp_path, monkeypatch):
+    monkeypatch.delenv("VCOC_HASH_JOBS", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    seq = _ingest(tmp_path, "seq", 1, monkeypatch)
+    auto = _ingest(tmp_path, "auto", None, monkeypatch)
+
+    assert _snapshot(auto) == _snapshot(seq)
+
+
+def _worker_counts(tmp_path, monkeypatch, jobs, **kwargs):
+    seen = []
+
+    def hook(*args):
+        pass
+
+    hook.set_workers = seen.append
+    _ingest(tmp_path, f"w{jobs}", jobs, monkeypatch, progress=hook, **kwargs)
+    return seen
+
+
+def test_ingest_reports_the_workers_it_really_uses_to_the_progress_hook(tmp_path, monkeypatch):
+    assert _worker_counts(tmp_path, monkeypatch, 2) == [2]
+
+
+def test_ingest_reports_one_worker_when_it_ran_single_process(tmp_path, monkeypatch):
+    assert _worker_counts(tmp_path, monkeypatch, 1) == [1]
+    assert _worker_counts(tmp_path, monkeypatch, 4, min_files=2_000) == [1]  # asked for 4, but the folder is too small
+
+
+def test_a_plain_progress_function_without_set_workers_still_works_in_a_pooled_ingest(tmp_path, monkeypatch):
+    calls = []
+    _ingest(tmp_path, "plain", 2, monkeypatch, progress=lambda *a: calls.append(a))
+    assert calls
 
 
 def test_a_progress_hook_that_raises_cancels_a_parallel_ingest_cleanly(tmp_path, monkeypatch):

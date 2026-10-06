@@ -57,9 +57,13 @@ class _IngestProgress:
         self._first: float | None = None
         self._last: tuple | None = None
         self.cancelled = False
+        self.workers: int | None = None  # how many hashing workers the ingest says it uses (None until it says)
 
     def cancel(self) -> None:
         self.cancelled = True
+
+    def set_workers(self, count: int) -> None:
+        self.workers = count
 
     def __call__(self, i, n, rel, size, done, total) -> None:
         if self.cancelled:
@@ -85,10 +89,25 @@ class _IngestProgress:
         return min(done / total, 1.0) if total else 1.0
 
     def screen_text(self) -> str:
-        """What the loading screen shows: `text()` unchanged, then a blank line and the block progress bar."""
+        """What the loading screen shows: `text()` unchanged, then (once the ingest has said how many workers it uses) a line
+        with the workers and the files per second, then a blank line and the block progress bar."""
         text = self.text()
         fraction = self.fraction()
-        return text if fraction is None else f"{text}\n\n{theme.progress_bar(fraction)}"
+        if fraction is None:
+            return text
+        return f"{text}{self._speed_line()}\n\n{theme.progress_bar(fraction)}"
+
+    def _speed_line(self) -> str:
+        last = self._last
+        if self.workers is None or last is None or (last[0] == last[1] and last[4] >= last[5]):  # nothing to say / rows being written
+            return ""
+        elapsed = self._clock() - self._first
+        finished = last[0] - 1  # the report is made when file i starts, so i - 1 files are done
+        if elapsed <= 0 or finished < 1:  # a coarse clock can read the same instant; nothing has finished yet
+            return ""
+        rate = finished / elapsed
+        speed = f"{rate:,.0f} files/s" if rate >= 10 else f"{rate:.1f} files/s"
+        return f"\n{self.workers} worker{'s' * (self.workers != 1)}  {speed}"
 
     def text(self) -> str:
         last = self._last
