@@ -259,6 +259,17 @@ def default_jobs() -> int:
         return 1
 
 
+def auto_jobs(file_count: int) -> int:
+    """Pool size for the interactive shell: an explicit VCOC_HASH_JOBS wins (=1 turns the pool off); otherwise half the CPUs,
+    at most 8 (~20 MiB per worker), and 1 below PARALLEL_MIN_FILES where a pool's start-up costs more than it saves."""
+    if "VCOC_HASH_JOBS" in os.environ:
+        return default_jobs()
+    if file_count < PARALLEL_MIN_FILES:
+        return 1
+    # ponytail: cap 8 from one SSD's numbers (16 workers were 2.2x faster than 4 cold); re-measure on an HDD before raising
+    return max(1, min(8, (os.cpu_count() or 1) // 2))
+
+
 def _rehash_batch(items: list[tuple[str, str]]) -> list:
     out: list = []
     for path, recorded_sha256 in items:

@@ -7,6 +7,7 @@ existing output keys feed the research paper, so they are pinned here and must n
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -206,3 +207,61 @@ def test_main_verify_db_flag_runs_only_the_verification_benchmark(tmp_path, caps
 
     out = capsys.readouterr().out
     assert "Running the Evidence verification" in out and "Running trial" not in out
+
+
+# --- Rehash-speed Task 1: --jobs for the verification benchmark -------------------------------------------------------
+
+
+def _tiny_evidence_db(path):
+    from vcoc import db
+    from vcoc.models import Evidence
+
+    conn = db.connect(path)
+    members = [Evidence(f"F/{i:03d}", f"f{i}.bin", "ab" * 32, 1, "2026-01-01T00:00:00Z", "", "F") for i in range(5)]
+    db.put_folder(conn, "F", "ef" * 32, [m.evidence_id for m in members], members)
+    conn.close()
+
+
+def test_verification_benchmark_jobs_reach_the_check_through_the_environment_and_are_restored(tmp_path, monkeypatch):
+    from vcoc.interactive import verification_screen as vs
+
+    path = tmp_path / "v.db"
+    _tiny_evidence_db(path)
+    monkeypatch.delenv("VCOC_HASH_JOBS", raising=False)
+    seen = []
+    real = vs._run_evidence_check
+
+    def spy(**kwargs):
+        seen.append(os.environ.get("VCOC_HASH_JOBS"))
+        return real(**kwargs)
+
+    monkeypatch.setattr(vs, "_run_evidence_check", spy)
+
+    result = ps.run_verification(path, jobs=3)
+
+    assert seen == ["3"] and result["jobs"] == 3
+    assert "VCOC_HASH_JOBS" not in os.environ  # the setting does not leak out of the benchmark
+
+
+def test_verification_benchmark_without_jobs_leaves_the_environment_and_the_result_alone(tmp_path, monkeypatch):
+    path = tmp_path / "v.db"
+    _tiny_evidence_db(path)
+    monkeypatch.setenv("VCOC_HASH_JOBS", "2")
+
+    result = ps.run_verification(path)
+
+    assert "jobs" not in result and os.environ["VCOC_HASH_JOBS"] == "2"
+
+
+def test_verify_db_main_passes_jobs_through_prints_them_and_writes_them_to_json(tmp_path, capsys, monkeypatch):
+    import json
+
+    path = tmp_path / "v.db"
+    _tiny_evidence_db(path)
+    out = tmp_path / "r.json"
+    monkeypatch.delenv("VCOC_HASH_JOBS", raising=False)
+
+    ps.main(["--verify-db", str(path), "--jobs", "4", "--out", str(out)])
+
+    assert "jobs 4" in capsys.readouterr().out
+    assert json.loads(out.read_text(encoding="utf-8"))[0]["jobs"] == 4

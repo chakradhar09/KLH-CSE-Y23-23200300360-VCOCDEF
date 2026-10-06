@@ -1029,7 +1029,11 @@ def test_evidence_check_with_no_database_or_no_rows_is_unchanged(tmp_path, monke
         assert [list(d) for d in details] == [["No evidence in the database."]]
 
 
-def test_evidence_check_memory_per_row_is_tiny(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "jobs, small, large",
+    [(1, 1000, 8000), (2, 2500, 9500)],  # both sizes on the SAME code path: the pool's fixed start-up cost is not per-row
+)
+def test_evidence_check_memory_per_row_is_tiny(tmp_path, monkeypatch, jobs, small, large):
     """Before: ~1.9 KB of Python objects per row (index dict, result objects, row string, 6-string details)."""
     import tracemalloc
 
@@ -1047,17 +1051,17 @@ def test_evidence_check_memory_per_row_is_tiny(tmp_path, monkeypatch):
         conn.close()
         return str(path)
 
-    small_db, large_db = build(1000), build(8000)
+    small_db, large_db = build(small), build(large)
 
     def peak(path: str) -> int:
         tracemalloc.start()
         try:
-            rows, details = verification_screen._run_evidence_check(db_path=path)
+            rows, details = verification_screen._run_evidence_check(db_path=path, jobs=jobs)
             return tracemalloc.get_traced_memory()[1]
         finally:
             tracemalloc.stop()
 
-    assert (peak(large_db) - peak(small_db)) / 7000 < 150  # bytes per extra row
+    assert (peak(large_db) - peak(small_db)) / (large - small) < 150  # bytes per extra row
 
 
 def test_evidence_sidebar_window_of_a_big_result_is_cheap_and_touches_the_database_rarely(tmp_path, monkeypatch):

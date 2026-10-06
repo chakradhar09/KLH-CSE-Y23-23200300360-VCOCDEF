@@ -157,6 +157,10 @@ copy you kept) to the `verifier.py` command: it fails if the log was cut short o
 multi-core machine with fast storage, `python cli.py add-evidence --file <folder> --evidence-id B1 --jobs 8` and
 `python verifier.py ... --jobs 8` hash in worker processes (or set `VCOC_HASH_JOBS=8`). Results are identical; on a
 416,000-file / 16.5 GB folder (warm cache, 32 CPUs) ingest went from 240 s to 40 s. It only starts above 2,000 files.
+The exception is the interactive shell's Verification > Evidence re-hash: with 2,000 or more evidence files it uses
+half your CPUs, at most 8 worker processes (about 20 MiB each), by itself; on a 419,900-file / 18.6 GB database (warm
+cache, 32 CPUs) that took 36 s with 8 workers instead of 203 s single-process (4 workers: 67 s). Set `VCOC_HASH_JOBS=1`
+to keep it single-process, or another number to choose the count. Every file is still re-hashed from disk; nothing is cached.
 
 Everything below explains what each menu option / underlying module actually does.
 

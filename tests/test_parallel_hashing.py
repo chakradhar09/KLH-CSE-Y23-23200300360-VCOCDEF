@@ -41,6 +41,32 @@ def test_default_jobs_is_one_and_follows_the_environment(monkeypatch):
     assert hashing.default_jobs() == 1
 
 
+@pytest.mark.parametrize(
+    "env, count, cpus, expected",
+    [
+        ("3", 10, 32, 3),  # an explicit value wins for any file count
+        ("banana", 400_000, 32, 1),  # garbage -> 1, like default_jobs
+        ("0", 400_000, 32, 1),
+        ("1", 400_000, 32, 1),  # VCOC_HASH_JOBS=1 is the off switch
+        (None, 1_999, 32, 1),  # below PARALLEL_MIN_FILES a pool costs more than it saves
+        (None, 2_000, 32, 8),  # capped at 8 workers
+        (None, 2_000, 64, 8),
+        (None, 2_000, 16, 8),  # exactly at the cap
+        (None, 2_000, 8, 4),  # half the CPUs
+        (None, 2_000, 4, 2),
+        (None, 2_000, 2, 1),
+        (None, 2_000, None, 1),  # os.cpu_count() can be None
+    ],
+)
+def test_auto_jobs_picks_a_pool_size_from_env_file_count_and_cpus(monkeypatch, env, count, cpus, expected):
+    if env is None:
+        monkeypatch.delenv("VCOC_HASH_JOBS", raising=False)
+    else:
+        monkeypatch.setenv("VCOC_HASH_JOBS", env)
+    monkeypatch.setattr(verifier.os, "cpu_count", lambda: cpus)
+    assert verifier.auto_jobs(count) == expected
+
+
 def test_units_cut_batches_by_file_count_and_by_bytes_and_isolate_big_files(monkeypatch):
     monkeypatch.setattr(hashing, "BATCH_FILES", 3)
     monkeypatch.setattr(hashing, "BATCH_BYTES", 100)

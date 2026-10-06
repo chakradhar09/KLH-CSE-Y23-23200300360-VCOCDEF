@@ -166,7 +166,23 @@ def apply_memory_cap(mib: int) -> None:
         raise OSError(f"could not apply the {mib} MiB memory cap (error {ctypes.get_last_error()})")
 
 
-def run_verification(db_path: Path) -> dict:
+def run_verification(db_path: Path, jobs: int | None = None) -> dict:
+    """_run_verification with `jobs` re-hash workers: handed over as VCOC_HASH_JOBS (what a user would set) for the duration
+    of the run. None leaves the environment, and so the shell's own default, alone."""
+    if jobs is None:
+        return _run_verification(db_path)
+    saved = os.environ.get("VCOC_HASH_JOBS")
+    os.environ["VCOC_HASH_JOBS"] = str(jobs)
+    try:
+        return {**_run_verification(db_path), "jobs": jobs}
+    finally:
+        if saved is None:
+            os.environ.pop("VCOC_HASH_JOBS", None)
+        else:
+            os.environ["VCOC_HASH_JOBS"] = saved
+
+
+def _run_verification(db_path: Path) -> dict:
     """Run the shell's Verification > Evidence check on a COPY of `db_path` and report time, peak memory and redraw cost.
 
     The original database is only read (copied); the copy lives in a temporary directory.
@@ -200,7 +216,8 @@ def run_verification(db_path: Path) -> dict:
 
 
 def print_verification_result(label: str, r: dict) -> None:
-    print(f"{label}: {r['rows']:,} rows, wall {r['wall_seconds']:.2f}s ({r['rows_per_second']:,.0f} rows/s)")
+    jobs = f", jobs {r['jobs']}" if "jobs" in r else ""
+    print(f"{label}: {r['rows']:,} rows, wall {r['wall_seconds']:.2f}s ({r['rows_per_second']:,.0f} rows/s{jobs})")
     print(f"  redraw   {r['redraw_ms_max']:8.1f} ms  (worst of 5 windows: start, middle, end, ...)")
     print(f"  peak     {r['peak_mib']:8.1f} MiB  (process peak so far)")
 
@@ -331,6 +348,10 @@ def main(argv: list[str] | None = None) -> None:
         "--verify-db", default=None, help="Benchmark Verification > Evidence on a copy of this database (read-only on it)"
     )
     parser.add_argument(
+        "--jobs", type=int, default=None,
+        help="With --verify-db: re-hash with this many worker processes (as VCOC_HASH_JOBS); default is the shell's own",
+    )
+    parser.add_argument(
         "--cap-mib", type=int, default=None,
         help="Cap this process's memory (emulates a small / 32-bit address space); allocations beyond it fail",
     )
@@ -340,7 +361,7 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.verify_db:
         print(f"Running the Evidence verification on a copy of {args.verify_db} ...")
-        result = run_verification(Path(args.verify_db))
+        result = run_verification(Path(args.verify_db), jobs=args.jobs)
         print_verification_result(args.verify_db, result)
         if args.out:
             Path(args.out).write_text(json.dumps([{"trial": args.verify_db, **result}], indent=2), encoding="utf-8")

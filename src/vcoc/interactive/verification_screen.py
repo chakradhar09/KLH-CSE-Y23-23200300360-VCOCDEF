@@ -6,6 +6,7 @@ import os
 import sqlite3
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from prompt_toolkit import Application
@@ -187,8 +188,69 @@ class _LazySeq:
     __hash__ = None
 
 
-def _run_evidence_check(progress=None, db_path: str | None = None) -> tuple[list[str], list[list[str]]]:
+def _evidence_rows(conn):
+    """(evidence_id, sha256, source_path, folder_id, size_bytes) of every evidence row, in id order.
+
+    Keyset pages, each fetched completely: no statement stays open while files are hashed, so the database is not
+    read-locked for the minutes a big re-hash takes (an open cursor here locked the Merkle tab out)."""
+    last = None
+    while True:
+        if last is None:
+            page = conn.execute(
+                "SELECT evidence_id, sha256, source_path, folder_id, size_bytes FROM evidence ORDER BY evidence_id LIMIT ?",
+                (_PAGE,),
+            ).fetchall()
+        else:
+            page = conn.execute(
+                "SELECT evidence_id, sha256, source_path, folder_id, size_bytes FROM evidence WHERE evidence_id > ?"
+                " ORDER BY evidence_id LIMIT ?",
+                (last, _PAGE),
+            ).fetchall()
+        if not page:
+            return
+        yield from page
+        last = page[-1][0]
+
+
+def _rehashed(rows, total: int, jobs: int, progress):
+    """(position, row, status) for every row, re-hashed from disk, in row order.
+
+    jobs > 1 hashes in a process pool (the whole 400k-row check is file-open/read latency, not CPU): progress then fires once
+    per hashed file, when it is done, not per chunk. The workers are stopped when this generator is closed or an exception
+    (the progress hook's cancel) leaves the loop that reads it."""
+    if jobs <= 1 or total < verifier_module.PARALLEL_MIN_FILES:
+        for position, row in enumerate(rows, 1):
+            yield position, row, verifier_module.evidence_rehash_status(position, total, row[0], row[2], row[1], progress)
+        return
+
+    pending = deque()  # the rows the pool has been handed and not yet answered: bounded by the pool's look-ahead
+
+    def entries():
+        for row in rows:  # EVERY row, so results stay 1:1 with rows: an empty source_path answers without any I/O
+            pending.append(row)
+            yield row[2], row[1], row[4]
+
+    results = verifier_module._rehash_parallel(entries(), jobs)
+    try:
+        for position, result in enumerate(results, 1):
+            row = pending.popleft()
+            if isinstance(result, OSError):  # not "missing": raised, exactly as a serial run does
+                raise result
+            if result is None:  # a very big file: hashed here, so it keeps byte-level progress and chunk-level cancel
+                result = verifier_module.evidence_rehash_status(position, total, row[0], row[2], row[1], progress)
+            elif progress is not None and result in ("match", "MISMATCH"):
+                size = row[4] or 0
+                progress(position, total, row[0], size, size)
+            yield position, row, result
+    finally:
+        results.close()
+
+
+def _run_evidence_check(
+    progress=None, db_path: str | None = None, jobs: int | None = None
+) -> tuple[list[str], list[list[str]]]:
     # db_path: pass an absolute path when this runs on a background thread, so a later chdir cannot redirect it
+    # jobs: re-hash worker processes; None = verifier.auto_jobs (VCOC_HASH_JOBS wins, small databases stay serial)
     path = db_path or cli_module.DEFAULT_DB
     if not Path(path).exists():
         return ["No evidence registered"], [["No evidence in the database."]]
@@ -209,27 +271,11 @@ def _run_evidence_check(progress=None, db_path: str | None = None) -> tuple[list
 
         flags = bytearray()
         keys: list[str] = []
-        position, last = 0, None
-        while True:
-            # Keyset pages, each fetched completely: no statement stays open while files are hashed, so the database is
-            # not read-locked for the minutes a big re-hash takes (an open cursor here locked the Merkle tab out).
-            if last is None:
-                page = conn.execute(
-                    "SELECT evidence_id, sha256, source_path, folder_id FROM evidence ORDER BY evidence_id LIMIT ?", (_PAGE,)
-                ).fetchall()
-            else:
-                page = conn.execute(
-                    "SELECT evidence_id, sha256, source_path, folder_id FROM evidence WHERE evidence_id > ?"
-                    " ORDER BY evidence_id LIMIT ?",
-                    (last, _PAGE),
-                ).fetchall()
-            if not page:
-                break
-            for evidence_id, sha256, source_path, folder_id in page:
-                position += 1
-                status = verifier_module.evidence_rehash_status(
-                    position, total, evidence_id, source_path, sha256, progress
-                )
+        if jobs is None:
+            jobs = verifier_module.auto_jobs(total)
+        stream = _rehashed(_evidence_rows(conn), total, jobs, progress)
+        try:
+            for position, (evidence_id, _, _, folder_id, _), status in stream:
                 if (position - 1) % _BLOCK == 0:
                     keys.append(evidence_id)
                 if evidence_id in logged_ids:
@@ -239,7 +285,8 @@ def _run_evidence_check(progress=None, db_path: str | None = None) -> tuple[list
                 else:
                     logged = 0
                 flags.append(_REHASH_STATUSES.index(status) | logged)
-            last = page[-1][0]
+        finally:
+            stream.close()  # on an exception (the progress hook's cancel) this is what stops the pool's workers
 
         leaves = [leaf for _, leaf, _ in db.group_leaves(conn, counts=False)]
     finally:
