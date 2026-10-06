@@ -19,7 +19,7 @@ from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
 
 import cli as cli_module
-from vcoc.interactive import forms, menu
+from vcoc.interactive import forms, menu, stage
 from vcoc.interactive.app import run_shell
 
 
@@ -34,6 +34,9 @@ class RecordingOutput(DummyOutput):
         RecordingOutput.instances.append(self)
 
     def enter_alternate_screen(self):
+        self.screen_changed()
+
+    def screen_changed(self):
         self.enters += 1
         if self.enters >= 2:
             self.second_screen.set()
@@ -96,8 +99,17 @@ def test_the_loading_screen_never_reads_the_keyboard_so_typed_ahead_keys_reach_t
 # --- the shell's data-heavy actions use it -------------------------------------------------------------------
 
 
+class CountingStage(stage.StageOutput):
+    """The shell keeps one alternate screen up, so a screen closing (the next one is about to draw) is the signal."""
+
+    def quit_alternate_screen(self):
+        super().quit_alternate_screen()
+        self._real.screen_changed()
+
+
 def _run_shell(monkeypatch, tmp_path, keys):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(stage, "StageOutput", CountingStage)
     RecordingOutput.instances.clear()
     with create_pipe_input() as pipe_input:
         pipe_input.send_text(keys)

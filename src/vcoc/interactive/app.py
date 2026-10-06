@@ -12,7 +12,7 @@ from prompt_toolkit.widgets import Frame
 
 import cli as cli_module
 
-from . import config, menu, status, theme
+from . import config, menu, stage, status, theme
 
 QUIT_INDEX = len(menu.MENU_ITEMS) - 1
 MENU_TITLE = "Verifiable Chain-of-Custody — Interactive Shell"
@@ -136,7 +136,7 @@ def run_shell() -> None:
     shell_config = config.load_config()
     shell_theme = theme.resolve_theme(color_depth=theme.detect_color_depth())
     theme.set_current(shell_theme)
-    with theme.ascii_borders(shell_theme):
+    with theme.ascii_borders(shell_theme), stage.stage():
         while True:
             index = _run_main_menu(_read_status(shell_config))
             if index == QUIT_INDEX:
