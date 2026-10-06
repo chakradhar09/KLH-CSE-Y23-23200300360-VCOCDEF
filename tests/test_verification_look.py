@@ -98,6 +98,92 @@ def test_loading_without_progress_shows_a_marquee_and_the_clock():
     assert all(len(line) <= SIDEBAR_COLUMNS for line in lines)
 
 
+# ---- Task 8: how many workers and how fast, on the line above the clock ---------------------------------------------------
+
+def rate_lines(bg) -> list[str]:
+    return bg.screen_text().split("\n")
+
+
+def test_the_sidebar_shows_the_worker_count_and_files_per_second_just_above_the_clock():
+    bg = loader(progress=(50_000, 92_879, "EV050000", 1 * MB, 2 * MB), started=100.0, now=110.0)  # 50,000 files in 10 s
+    bg._workers = 8
+    lines = rate_lines(bg)
+    assert "  8 workers  5,000 files/s" in lines
+    assert lines.index("  8 workers  5,000 files/s") == lines.index("  10.0 s") - 1
+    assert all(len(line) <= SIDEBAR_COLUMNS for line in lines)
+
+
+def test_one_worker_is_singular_and_an_unknown_count_shows_only_the_rate():
+    bg = loader(progress=(1_000, 5_000, "a", 1, 2), started=0.0, now=10.0)
+    bg._workers = 1
+    assert "  1 worker  100 files/s" in rate_lines(bg)
+    bg._workers = None
+    assert "  100 files/s" in rate_lines(bg)
+
+
+def test_a_slow_rate_keeps_one_decimal_so_it_never_reads_as_zero():
+    bg = loader(progress=(5, 9, "EV005", 1 * MB, 2 * MB))  # 5 files in 12.3 s
+    bg._workers = 4
+    assert "  4 workers  0.4 files/s" in rate_lines(bg)
+
+
+def test_the_rate_line_is_left_out_before_any_report_and_at_time_zero():
+    assert not any("files/s" in line for line in rate_lines(loader()))
+    assert not any("files/s" in line for line in rate_lines(loader(progress=(3, 9, "a", 1, 2), started=100.0, now=100.0)))
+
+
+def test_the_worst_case_rate_line_still_fits_the_sidebar():
+    bg = loader(progress=(420_000, 420_000, "EV420000", 1, 1), started=0.0, now=4.2)  # 100,000 files/s
+    bg._workers = 16
+    lines = rate_lines(bg)
+    assert "  16 workers  100,000 files/s" in lines
+    assert all(len(line) <= SIDEBAR_COLUMNS for line in lines), [len(l) for l in lines]
+
+
+def test_the_loads_progress_hook_carries_the_worker_count_to_the_sidebar_and_a_new_load_starts_without_one():
+    gate = threading.Event()
+    bg = _BackgroundLoad(on_change=lambda: None)
+
+    def load(report):
+        report.set_workers(3)
+        report(1, 10, "EV001", 1, 2)
+        gate.wait(2)
+        return ([], [])
+
+    bg.start(load)
+    try:
+        pause = threading.Event()
+        for _ in range(100):  # the count is set first, then the first report arrives, then the (coarse) clock must tick
+            if any("3 workers" in line for line in rate_lines(bg)):
+                break
+            pause.wait(0.02)
+        assert any("3 workers" in line for line in rate_lines(bg))
+    finally:
+        gate.set()
+        bg.cancel()
+    bg.start(lambda report: (gate.wait(2), ([], []))[1])
+    try:
+        assert bg._workers is None  # the previous load's count does not leak into the new one
+    finally:
+        bg.cancel()
+
+
+def test_a_superseded_load_cannot_overwrite_the_new_loads_worker_count():
+    bg = _BackgroundLoad(on_change=lambda: None)
+    hooks = []
+    bg.start(lambda report: hooks.append(report) or threading.Event().wait(0.3) or ([], []))
+    for _ in range(100):
+        if hooks:
+            break
+        threading.Event().wait(0.02)
+    bg.start(lambda report: threading.Event().wait(0.3) or ([], []))  # supersedes the first
+    hooks[0].set_workers(99)
+    try:
+        assert bg._workers is None
+    finally:
+        bg.cancel()
+
+
 def test_the_clock_starts_when_the_load_starts():
     ticks = iter([50.0, 53.5])  # start() reads the clock once, then screen_text() once
     gate = threading.Event()

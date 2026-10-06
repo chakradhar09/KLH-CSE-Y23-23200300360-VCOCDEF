@@ -279,6 +279,67 @@ def test_cancelling_a_big_pooled_check_returns_promptly(tmp_path, small_batches,
     assert multiprocessing.active_children() == []
 
 
+# --- Task 8: the check tells the progress hook how many workers it really used ----------------------------------------
+
+
+def _workers_reported(path, **kwargs):
+    seen = []
+
+    def hook(*args):
+        pass
+
+    hook.set_workers = seen.append
+    vs._run_evidence_check(db_path=path, progress=hook, **kwargs)
+    return seen
+
+
+def test_the_check_reports_the_pool_size_it_used(tmp_path, small_batches):
+    assert _workers_reported(_mixed_rows(tmp_path), jobs=3) == [3]
+
+
+def test_the_check_reports_one_worker_when_it_ran_serially(tmp_path, small_batches):
+    assert _workers_reported(_mixed_rows(tmp_path), jobs=1) == [1]
+
+
+def test_the_check_reports_one_worker_below_the_minimum_file_count_even_if_more_were_asked_for(tmp_path):
+    assert _workers_reported(_mixed_rows(tmp_path), jobs=4) == [1]  # 61 rows, and the real threshold is 2,000
+
+
+def test_a_real_pooled_check_shows_its_worker_count_and_rate_in_the_loaders_sidebar_text(tmp_path, small_batches):
+    path = _mixed_rows(tmp_path)
+    held, release = threading.Event(), threading.Event()
+    bg = vs._BackgroundLoad(lambda: None)
+
+    def load(progress):
+        def hook(*args):
+            progress(*args)  # the loader's own hook: records the progress, and carries set_workers on its attribute
+            held.set()
+            release.wait(30)  # stay mid-run so the sidebar can be read
+
+        hook.set_workers = progress.set_workers
+        return vs._run_evidence_check(progress=hook, db_path=path, jobs=3)
+
+    bg.start(load)
+    try:
+        assert held.wait(30)
+        shown = ""
+        for _ in range(100):  # the (coarse) clock must tick once before a rate exists
+            shown = bg.screen_text()
+            if "files/s" in shown:
+                break
+            threading.Event().wait(0.02)
+        assert any(line.startswith("  3 workers  ") and line.endswith(" files/s") for line in shown.split("\n")), shown
+    finally:
+        release.set()
+        bg.cancel()
+
+
+def test_a_plain_progress_function_without_the_hook_still_works(tmp_path, small_batches):
+    calls = []
+    vs._run_evidence_check(db_path=_mixed_rows(tmp_path), jobs=2, progress=lambda *a: calls.append(a))
+    assert calls  # no set_workers attribute: nothing to report to, nothing breaks
+
+
 # --- Task 5: the interactive shell's Evidence tab picks the pool by itself ---------------------------------------------
 
 

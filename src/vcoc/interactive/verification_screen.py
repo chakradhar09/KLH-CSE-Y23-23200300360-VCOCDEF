@@ -212,13 +212,18 @@ def _evidence_rows(conn):
         last = page[-1][0]
 
 
+def _pool_size(jobs: int, total: int) -> int:
+    """Workers a re-hash of `total` rows really uses: `jobs`, but 1 (serial) below the pool's minimum file count."""
+    return jobs if jobs > 1 and total >= verifier_module.PARALLEL_MIN_FILES else 1
+
+
 def _rehashed(rows, total: int, jobs: int, progress):
     """(position, row, status) for every row, re-hashed from disk, in row order.
 
     jobs > 1 hashes in a process pool (the whole 400k-row check is file-open/read latency, not CPU): progress then fires once
     per hashed file, when it is done, not per chunk. The workers are stopped when this generator is closed or an exception
     (the progress hook's cancel) leaves the loop that reads it."""
-    if jobs <= 1 or total < verifier_module.PARALLEL_MIN_FILES:
+    if _pool_size(jobs, total) == 1:
         for position, row in enumerate(rows, 1):
             yield position, row, verifier_module.evidence_rehash_status(position, total, row[0], row[2], row[1], progress)
         return
@@ -273,6 +278,9 @@ def _run_evidence_check(
         keys: list[str] = []
         if jobs is None:
             jobs = verifier_module.auto_jobs(total)
+        set_workers = getattr(progress, "set_workers", None)  # the shell's loader shows it in the sidebar
+        if set_workers is not None:
+            set_workers(_pool_size(jobs, total))
         stream = _rehashed(_evidence_rows(conn), total, jobs, progress)
         try:
             for position, (evidence_id, _, _, folder_id, _), status in stream:
@@ -352,6 +360,7 @@ class _BackgroundLoad:
         self.loading = False
         self._status = ""
         self._progress = None
+        self._workers = None  # how many re-hash workers the running load reports it uses (None until it says)
 
     @property
     def status(self) -> str:
@@ -385,10 +394,16 @@ class _BackgroundLoad:
         i, n, evidence_id, done, total = self._progress
         fmt = verifier_module._fmt_bytes
         name = evidence_id if len(evidence_id) <= 30 else evidence_id[:29] + "…"
-        return "\n".join([
+        lines = [
             "  Re-hashing evidence", f"  File {i:,} of {n:,}", f"  {name}", f"  {fmt(done)} of {fmt(total)}", "",
-            "  " + theme.progress_bar(self.fraction(), _SIDEBAR_BAR_CELLS), "", clock,
-        ])
+            "  " + theme.progress_bar(self.fraction(), _SIDEBAR_BAR_CELLS), "",
+        ]
+        if elapsed > 0:  # files per second so far (files finished or being hashed / time), and the workers doing them
+            rate = i / elapsed
+            speed = f"{rate:,.0f} files/s" if rate >= 10 else f"{rate:.1f} files/s"
+            workers = self._workers
+            lines.append("  " + (f"{workers} worker{'s' * (workers != 1)}  " if workers else "") + speed)
+        return "\n".join(lines + [clock])
 
     def start(self, load) -> None:
         with self._lock:
@@ -396,6 +411,7 @@ class _BackgroundLoad:
             gen = self._generation
             self.loading = True
             self._started = self._clock()
+            self._workers = None
             self.status = "Loading..."
 
         def progress(i: int, n: int, evidence_id: str, done: int, total: int) -> None:
@@ -406,6 +422,12 @@ class _BackgroundLoad:
             if done >= total or now - self._last_change >= self._min_interval:
                 self._last_change = now
                 self._on_change()
+
+        def set_workers(count: int) -> None:
+            if gen == self._generation:  # a superseded load must not overwrite the newer one's count
+                self._workers = count
+
+        progress.set_workers = set_workers  # a load that knows its worker count says so; plain callbacks never have to
 
         def run() -> None:
             try:
