@@ -35,7 +35,7 @@ _SIDEBAR_BAR_CELLS = 24  # a progress bar or marquee that fits the column with i
 # Help lines must fit the 78 columns inside a frame on an 80-column terminal (tests/test_help_lines.py checks every HELP_*).
 HELP_SIDEBAR = " ↑/↓ select   PgUp/PgDn/Home/End jump   Ctrl-R/F5 refresh   Esc/q back"
 HELP_VERIFICATION = " Tab/←→ section   1-3 jump   ↑/↓ PgUp/PgDn   Ctrl-R refresh   Esc/q back"
-HELP_EVIDENCE = " Tab/←→ section  1-3 jump  f view  ↑/↓ PgUp/PgDn  Ctrl-R refresh  Esc/q back"  # the Evidence tab's own
+HELP_EVIDENCE = " Tab/←→ tabs   1-3 jump   f view   ↑/↓ PgUp/PgDn   Ctrl-R refresh   Esc/q back"  # the Evidence tab's own: 3-space gaps, or it is not styled like the others
 
 
 def _load_json(path: str) -> object | None:
@@ -163,15 +163,26 @@ VIEW_LABELS = {
 }
 
 
+VIEW_NOTES = {  # what each category means: the second line under the strip
+    "all": "every registered file, then the Merkle root",
+    "green": "re-hash matches and a custody event names it",
+    "tampered": "re-hash does NOT match the recorded hash",
+    "not_logged": "no custody event names the file",
+    "unverifiable": "file missing, or no source path to re-hash",
+    "logged": "named by at least one custody event",
+}
+
+
+def _view_heading(counts: dict[str, int], active: str) -> str:
+    """The chosen category's name, how many files it holds and what it means, on one line."""
+    n = counts[active]
+    return f" {VIEW_LABELS[active]} · {n:,} file{'s' * (n != 1)} — {VIEW_NOTES[active]}"
+
+
 def _next_view(name: str) -> str:
     return VIEW_ORDER[(VIEW_ORDER.index(name) + 1) % len(VIEW_ORDER)]
 
 
-def _summary_line(counts: dict[str, int], active: str) -> str:
-    """The Evidence tab's category counts on one line, the active view in brackets (the tab bar's style)."""
-    parts = [f"{VIEW_LABELS[name]} {counts[name]:,}" for name in VIEW_ORDER]
-    parts = [f"[{part}]" if name == active else part for name, part in zip(VIEW_ORDER, parts)]
-    return " " + "  ".join(parts)
 _CACHED_BLOCKS = 8  # a filtered list jumps between blocks; keeping a few avoids a query per row on every redraw
 
 
@@ -661,12 +672,12 @@ def _run_sidebar_detail_app(
         if bg is not None and bg.loading:
             return bg.screen_text()
         # The column's real height, so the rows fill it and the position footer lands on its last line.
-        lines = _sidebar_lines(top_bar is not None) - (1 if render_summary() else 0)  # the summary line takes one
+        lines = _sidebar_lines(top_bar is not None) - (2 if render_heading() else 0)  # the heading and its divider take two
         return _sidebar_text(rows, selected_row[0], top, lines - 1 if len(rows) > lines else lines)
 
-    def render_summary() -> str:
+    def render_heading() -> str:
         found = evidence_results()
-        return _summary_line(found.summary(), evidence_view[0]) if found is not None else ""
+        return _view_heading(found.summary(), evidence_view[0]) if found is not None else ""
 
     def render_detail() -> str:
         bg, _, details = current()
@@ -719,7 +730,8 @@ def _run_sidebar_detail_app(
         top_rows = [
             Window(FormattedTextControl(theme.styled(top_bar, "tabs")), height=1),
             Window(height=1, char=rule, style="class:chrome"),
-            Window(FormattedTextControl(theme.styled(render_summary, "tabs")), height=lambda: 1 if render_summary() else 0),
+            Window(FormattedTextControl(theme.styled(render_heading, "heading")), height=lambda: 1 if render_heading() else 0),
+            Window(height=lambda: 1 if render_heading() else 0, char=rule, style="class:chrome"),  # the divider under the heading
         ]
 
     body = HSplit(

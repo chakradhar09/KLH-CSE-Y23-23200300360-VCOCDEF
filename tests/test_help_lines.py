@@ -47,6 +47,25 @@ def test_every_help_line_fits_an_80_column_frame(name, line):
     assert len(line) <= FRAME_INNER_WIDTH, f"{name} is {len(line)} characters"
 
 
+@pytest.mark.parametrize("name, line", sorted(help_lines().items()))
+def test_every_help_line_styles_each_key_and_its_description_apart(name, line):
+    """The renderer splits a help line into key / description pairs on gaps of three or more spaces. A line squeezed to
+    two-space gaps rendered as one grey block after its first key, so it looked unlike every other screen's footer."""
+    for style, part in theme.colorize(line, "hint", theme.make_theme("dark")):
+        if style:  # a described part: one description, never several keys run together
+            assert "  " not in part, f"{name}: {part!r}"
+
+
+def test_the_evidence_tabs_help_line_reads_like_the_tabs_next_to_it():
+    from vcoc.interactive import verification_screen as vs
+
+    def keys(line):
+        return [part.strip() for style, part in theme.colorize(line, "hint", theme.make_theme("dark")) if not style and part.strip()]
+
+    assert keys(vs.HELP_EVIDENCE) == ["Tab/←→", "1-3", "f", "↑/↓ PgUp/PgDn", "Ctrl-R", "Esc/q"]
+    assert keys(vs.HELP_VERIFICATION) == ["Tab/←→", "1-3", "↑/↓ PgUp/PgDn", "Ctrl-R", "Esc/q"]
+
+
 def test_the_three_lines_that_used_to_clip_have_the_approved_wording():
     assert verification_screen.HELP_VERIFICATION == " Tab/←→ section   1-3 jump   ↑/↓ PgUp/PgDn   Ctrl-R refresh   Esc/q back"
     assert evidence_search.HELP_SEARCH == " ↑/↓ PgUp/PgDn select   Enter choose   Ctrl-R refresh   Esc cancel"

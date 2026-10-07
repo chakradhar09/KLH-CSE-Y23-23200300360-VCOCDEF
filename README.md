@@ -98,7 +98,10 @@ on the line the chain text is shortened first:
 
 Nothing re-verifies by itself: the header only changes when you run Verify chain, open the Verification screen (it checks the
 chain first, and again each time you return to its Chain tab) or run its Evidence tab (Ctrl-R re-runs it). The Evidence tab
-shows `All / All green / Tampered / Not logged / Unverifiable / Logged` counts on a summary line; `f` steps through them.
+lists one category at a time: `All / All green / Tampered / Not logged / Unverifiable / Logged`, and `f` steps through them. A heading
+row (with a divider under it) names the current category, counts its files and says what it means. *Unverifiable* is a file
+the check could not re-hash (the source file is missing, or no source path was recorded), so it can be neither proven
+unchanged nor shown tampered.
 The menu frame turns amber when either is stale and red when either is tampered. The header is a convenience, not evidence: the authoritative
 checks are Verify chain, the Verification screen and the standalone `verifier.py`. It reads the database through a
 read-only connection (it never creates or changes it); measured on a database with 92,879 evidence rows it adds about

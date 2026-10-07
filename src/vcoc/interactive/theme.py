@@ -307,6 +307,15 @@ def _tabs_line(body: str, theme: Theme, width: int | None) -> Fragments:
     return out
 
 
+def _heading_line(body: str, theme: Theme, width: int | None) -> Fragments:
+    """A category's heading, ` Name · N files — what it means`: the name stands out, the rest is quiet."""
+    lead = len(body) - len(body.lstrip())
+    name, sep, rest = body[lead:].partition(" · ")
+    if not sep:
+        return [("class:dim", body)]
+    return [("", body[:lead]), ("class:accent class:b", name), ("class:dim", sep + rest)]
+
+
 def _list_line(body: str, theme: Theme, width: int | None) -> Fragments:
     """A pick-list row: a marker and a name, never a verdict (a file called "OK report" is just a file)."""
     if _QUIET.match(body):
@@ -461,7 +470,8 @@ def _header_line(body: str, theme: Theme, width: int | None) -> Fragments:
 
 
 _LINE_KINDS = {
-    "menu": _menu_line, "sidebar": _sidebar_line, "tabs": _tabs_line, "list": _list_line, "results": _results_line,
+    "menu": _menu_line, "sidebar": _sidebar_line, "tabs": _tabs_line, "heading": _heading_line,
+    "list": _list_line, "results": _results_line,
     "prompt": _prompt_line, "plain": _plain_line, "confirm": _confirm_line, "output": _output_line,
     "loading": _loading_line, "header": _header_line, "hint": lambda body, theme, width: _hint_line(body),
 }

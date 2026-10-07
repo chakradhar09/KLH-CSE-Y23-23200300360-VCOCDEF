@@ -42,19 +42,6 @@ def test_the_views_come_in_the_order_good_news_first():
     assert set(vs.VIEW_LABELS) == set(vs.VIEW_ORDER)
 
 
-def test_the_summary_line_brackets_the_active_view_and_shows_every_count():
-    line = vs._summary_line(COUNTS, "tampered")
-    assert line.index("All 7") < line.index("All green 1") < line.index("[Tampered 1]") < line.index("Not logged 4")
-    assert "Unverifiable 2" in line and "Logged 3" in line
-    assert line.count("[") == 1 and len(line) <= 78
-
-
-def test_the_summary_line_uses_thousands_separators_and_keeps_the_good_news_in_view():
-    big = {"all": 141_992, "green": 141_980, "tampered": 3, "not_logged": 12, "unverifiable": 5, "logged": 141_988}
-    line = vs._summary_line(big, "all")
-    assert line[:78].count("141,992") == 1 and "All green 141,980" in line[:78] and "Tampered 3" in line[:78]
-
-
 @pytest.mark.parametrize("name, following", [("all", "green"), ("green", "tampered"), ("logged", "all")])
 def test_f_steps_to_the_next_view_and_wraps(name, following):
     assert vs._next_view(name) == following
@@ -112,9 +99,10 @@ def replay(raw: str) -> list[str]:
     return ["".join(line).rstrip() for line in grid]
 
 
-def run_screen(tmp_path, monkeypatch, steps):
-    """Open the Verification screen on a seven-file database, type each step's keys and return the screen after each one."""
-    _mixed_rows(tmp_path, n=6)
+def run_screen(tmp_path, monkeypatch, steps, files=6):
+    """Open the Verification screen on a database of `files` + 1 files (7 by default), type each step's keys and return
+    the screen after each one."""
+    _mixed_rows(tmp_path, n=files)
     monkeypatch.chdir(tmp_path)
     buffer = io.StringIO()
     output = Vt100_Output(buffer, lambda: Size(ROWS, COLS), term="xterm-256color", default_color_depth=ColorDepth.DEPTH_24_BIT)
@@ -145,23 +133,23 @@ def run_screen(tmp_path, monkeypatch, steps):
     return ["\n".join(replay(raw[:end])) for end in ends]
 
 
-def test_the_evidence_tab_shows_the_summary_and_every_file_once_the_check_has_finished(tmp_path, monkeypatch):
+def test_the_evidence_tab_shows_the_heading_and_every_file_once_the_check_has_finished(tmp_path, monkeypatch):
     (screen,) = run_screen(tmp_path, monkeypatch, ["2"])
-    assert "[All 7]  All green 1  Tampered 1  Not logged 4  Unverifiable 2  Logged 3" in screen
+    assert "All · 7 files — every registered file, then the Merkle root" in screen
     assert all(name in screen for name in ("SOLO", "F1/m000", "F1/m001", "F1/m005", "Merkle root over all evidence"))
 
 
 def test_f_steps_through_the_views_and_the_list_follows(tmp_path, monkeypatch):
     _, green, tampered = run_screen(tmp_path, monkeypatch, ["2", "f", "f"])
-    assert "[All green 1]" in green and "SOLO" in green and "F1/m000" not in green and "Merkle root" not in green
-    assert "[Tampered 1]" in tampered and "F1/m001" in tampered and "SOLO" not in tampered
+    assert "All green · 1 file" in green and "SOLO" in green and "F1/m000" not in green and "Merkle root" not in green
+    assert "Tampered · 1 file" in tampered and "F1/m001" in tampered and "SOLO" not in tampered
     assert "re-hash: MISMATCH" in tampered  # its detail pane describes the file that no longer matches
     assert "f view" in tampered  # the Evidence tab's help line
 
 
 def test_f_wraps_around_to_the_whole_list(tmp_path, monkeypatch):
     screens = run_screen(tmp_path, monkeypatch, ["2"] + ["f"] * 6)
-    assert "[All 7]" in screens[-1] and "Merkle root over all evidence" in screens[-1]
+    assert "All · 7 files" in screens[-1] and "Merkle root over all evidence" in screens[-1]
 
 
 def test_the_other_tabs_show_neither_the_summary_nor_the_f_hint(tmp_path, monkeypatch):
@@ -172,4 +160,4 @@ def test_the_other_tabs_show_neither_the_summary_nor_the_f_hint(tmp_path, monkey
 
 def test_ctrl_r_on_the_evidence_tab_starts_again_from_the_whole_list(tmp_path, monkeypatch):
     _, tampered, again = run_screen(tmp_path, monkeypatch, ["2", "ff", CTRL_R])
-    assert "[Tampered 1]" in tampered and "[All 7]" in again
+    assert "Tampered · 1 file" in tampered and "All · 7 files" in again
