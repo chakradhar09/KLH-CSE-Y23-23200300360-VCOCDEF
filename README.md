@@ -217,7 +217,7 @@ Everything below explains what each menu option / underlying module actually doe
 pytest
 ```
 
-180 tests cover hashing, Merkle proof correctness (including nested/folder-batch proofs), hash-chain tamper detection, ECDSA sign/verify, encrypted storage, the tamper-simulation harness, multi-evidence custody events, the provenance HTML export, and the interactive shell (menu, forms, config, search, multi-select, key-pair setup).
+1,335 tests cover hashing (serial and process-pool), Merkle proof correctness (including nested/folder-batch proofs), hash-chain tamper detection, ECDSA sign/verify, the SQLite single store and its append-only guard, the tamper-simulation harness, multi-evidence custody events, the verifier anchor, the provenance HTML export, and the interactive shell (menu, forms, config, search, multi-select, key-pair setup, themes and the terminal matrix, loading screens, the status header, the Evidence categories and the screen stage).
 
 Full architecture, sequence diagrams, and a worked example session for the interactive shell are in
 [`Doc/CLI_Interactive_Shell_Architecture.md`](Doc/CLI_Interactive_Shell_Architecture.md).
