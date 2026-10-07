@@ -6,7 +6,7 @@ import os
 import sqlite3
 import threading
 import time
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 
 from prompt_toolkit import Application
@@ -21,6 +21,7 @@ import cli as cli_module
 import verifier as verifier_module
 from vcoc import db
 
+from . import config as config_module
 from . import status as chain_status
 from . import theme
 from .evidence_search import _add_jump_keys, _visible_height, window_text
@@ -34,6 +35,7 @@ _SIDEBAR_BAR_CELLS = 24  # a progress bar or marquee that fits the column with i
 # Help lines must fit the 78 columns inside a frame on an 80-column terminal (tests/test_help_lines.py checks every HELP_*).
 HELP_SIDEBAR = " ↑/↓ select   PgUp/PgDn/Home/End jump   Ctrl-R/F5 refresh   Esc/q back"
 HELP_VERIFICATION = " Tab/←→ section   1-3 jump   ↑/↓ PgUp/PgDn   Ctrl-R refresh   Esc/q back"
+HELP_EVIDENCE = " Tab/←→ section  1-3 jump  f view  ↑/↓ PgUp/PgDn  Ctrl-R refresh  Esc/q back"  # the Evidence tab's own
 
 
 def _load_json(path: str) -> object | None:
@@ -50,7 +52,12 @@ def _open_db(db_path: str | None = None):
 
 def _load_entries(db_path: str | None = None) -> list[dict] | None:
     conn = _open_db(db_path)
-    return None if conn is None else [e.to_dict() for e in HashChain.load_db(conn).entries]
+    if conn is None:
+        return None
+    try:
+        return [e.to_dict() for e in HashChain.load_db(conn).entries]
+    finally:
+        conn.close()  # left to the garbage collector it keeps the file locked on Windows
 
 
 def _load_index(db_path: str | None = None) -> dict:
@@ -59,6 +66,38 @@ def _load_index(db_path: str | None = None) -> dict:
 
 def _load_folders(db_path: str | None = None) -> dict:
     return cli_module._load_folder_index(db_path or cli_module.DEFAULT_DB)
+
+
+def _shortened_warning(shell_config: dict | None, entries: list) -> tuple[list[str], list[list[str]]]:
+    """A first row (and its detail) when the log holds fewer events than the most ever verified, else nothing.
+
+    The log only grows, so a shorter one means the newest events were deleted. What is left still verifies, so the chain
+    check below cannot see it; the saved high-water mark can."""
+    db_path = os.path.abspath(cli_module.DEFAULT_DB)
+    before = config_module.last_verify(shell_config or {}, db_path)
+    counts = chain_status.read_counts(db_path)
+    gone = chain_status.removed_events(before, counts) if before and counts else 0
+    if not gone:
+        return [], []
+    seen = before.get("high_water", before["events"])
+    row = f"TAMPER  log shortened: {len(entries)} events now, {seen} verified before"
+    detail = [  # short lines: the detail pane is narrow and wraps in the middle of words
+        f"The log has {len(entries)} event(s); {seen} were",
+        "present when it was last verified.",
+        "",
+        f"{gone} event(s) were removed from the end.",
+        "The ones left still verify, so the",
+        "chain check alone cannot see this.",
+        "",
+        "Restore the database from a backup,",
+        "or compare it with an anchor.json",
+        "made earlier with cli.py export.",
+        "",
+        "To reset this warning, delete",
+        '"last_verify" from shell_config.json,',
+        "but only once you know why.",
+    ]
+    return [row], [detail]
 
 
 def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[str]]:
@@ -71,9 +110,18 @@ def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[
 
     from ecdsa import VerifyingKey
 
-    verifying_key = VerifyingKey.from_pem(Path(public_key_path).read_bytes())
+    try:
+        verifying_key = VerifyingKey.from_pem(Path(public_key_path).read_bytes())
+    except Exception as exc:  # a damaged or replaced key file is a finding to show, not a crash
+        return ["Public key unreadable"], [
+            [
+                f"{public_key_path} is not a valid public key ({type(exc).__name__}).",
+                "Restore the original public key file. A newly generated key cannot verify the existing events.",
+            ]
+        ]
+    warn_rows, warn_details = _shortened_warning(shell_config, entries)
     if not entries:
-        return ["No custody events logged yet"], [["The custody log is empty."]]
+        return [*warn_rows, "No custody events logged yet"], [*warn_details, ["The custody log is empty."]]
 
     per_entry = verifier_module.verify_each(entries, verifying_key)
     chain_status.record_chain_check(
@@ -81,8 +129,8 @@ def _run_chain_check(shell_config: dict | None = None) -> tuple[list[str], list[
     )
     chain_view = build_chain_view(entries)
 
-    rows = []
-    details = []
+    rows = list(warn_rows)
+    details = list(warn_details)
     for entry, verification in zip(chain_view, per_entry):
         eids = ", ".join(entry["evidence_ids"])
         target = f"[{eids}]" if len(entry["evidence_ids"]) > 1 else eids
@@ -99,6 +147,34 @@ _REHASH_STATUSES = ("match", "MISMATCH", "not found", "no source_path recorded")
 _REHASH_OK = (True, False, True, True)
 
 
+# The categories the Evidence tab can show, from a row's flag byte (see _EvidenceResults): the order `f` cycles through.
+# A file can be in several (a tampered file that is also not logged); "all green" means it matched AND is logged.
+_VIEWS = {
+    "green": lambda f: f & 7 == 4,  # re-hash match and logged
+    "tampered": lambda f: f & 3 == 1,  # re-hash MISMATCH: the file on disk is not what was registered
+    "not_logged": lambda f: not f & 4,  # no custody event names it (directly or through its folder)
+    "unverifiable": lambda f: f & 3 in (2, 3),  # the file is gone, or no source_path was recorded: nothing to re-hash
+    "logged": lambda f: bool(f & 4),
+}
+VIEW_ORDER = ("all", *_VIEWS)  # good news first, so a long summary line loses its least important end
+VIEW_LABELS = {
+    "all": "All", "green": "All green", "tampered": "Tampered", "not_logged": "Not logged",
+    "unverifiable": "Unverifiable", "logged": "Logged",
+}
+
+
+def _next_view(name: str) -> str:
+    return VIEW_ORDER[(VIEW_ORDER.index(name) + 1) % len(VIEW_ORDER)]
+
+
+def _summary_line(counts: dict[str, int], active: str) -> str:
+    """The Evidence tab's category counts on one line, the active view in brackets (the tab bar's style)."""
+    parts = [f"{VIEW_LABELS[name]} {counts[name]:,}" for name in VIEW_ORDER]
+    parts = [f"[{part}]" if name == active else part for name, part in zip(VIEW_ORDER, parts)]
+    return " " + "  ".join(parts)
+_CACHED_BLOCKS = 8  # a filtered list jumps between blocks; keeping a few avoids a query per row on every redraw
+
+
 class _EvidenceResults:
     """The Evidence tab's result: ONE byte per evidence row (re-hash status + logged flag) and a saved key every
     _BLOCK rows. Row text and details are built on demand from the database, a block at a time, so a 400,000-row
@@ -110,27 +186,46 @@ class _EvidenceResults:
         self._flags = flags  # bit 0-1: index into _REHASH_STATUSES, bit 2: logged, bit 3: logged only via its folder
         self._keys = keys  # evidence_id of every _BLOCK-th row, in id order
         self._root = root
-        self._block_no = -1
-        self._block: list[tuple] = []
+        self._blocks: dict[int, list[tuple]] = {}  # block number -> its rows, the most recent _CACHED_BLOCKS
+        self._view_indexes: dict[str, list[int]] = {}
 
     @property
     def total(self) -> int:
         return len(self._flags) + 1  # + the "Merkle root over all evidence" row
 
+    def summary(self) -> dict[str, int]:
+        """How many files are in each view ("all" counts files only, not the Merkle root row)."""
+        by_flag = Counter(self._flags)
+        counts = {name: sum(n for flag, n in by_flag.items() if test(flag)) for name, test in _VIEWS.items()}
+        return {"all": len(self._flags), **counts}
+
+    def view(self, name: str):
+        """(rows, details) for one category: lazy lists over just those files; "all" is the whole list with the Merkle row."""
+        if name == "all":
+            return _LazySeq(self, "row"), _LazySeq(self, "detail")
+        if name not in self._view_indexes:
+            test = _VIEWS[name]  # KeyError for a name that is not a category
+            self._view_indexes[name] = [i for i, flag in enumerate(self._flags) if test(flag)]
+        indexes = self._view_indexes[name]
+        return _LazySeq(self, "row", indexes), _LazySeq(self, "detail", indexes)
+
     def _fetch(self, i: int) -> tuple:
         block_no = i // _BLOCK
-        if block_no != self._block_no:
+        block = self._blocks.get(block_no)
+        if block is None:
             conn = sqlite3.connect(self._db_path)
             try:
-                self._block = conn.execute(
+                block = conn.execute(
                     "SELECT evidence_id, original_filename, sha256, source_path, folder_id FROM evidence"
                     " WHERE evidence_id >= ? ORDER BY evidence_id LIMIT ?",
                     (self._keys[block_no], _BLOCK),
                 ).fetchall()
             finally:
                 conn.close()
-            self._block_no = block_no
-        return self._block[i - block_no * _BLOCK]
+            if len(self._blocks) >= _CACHED_BLOCKS:
+                self._blocks.pop(next(iter(self._blocks)))  # the oldest
+            self._blocks[block_no] = block
+        return block[i - block_no * _BLOCK]
 
     def row(self, i: int) -> str:
         if i == len(self._flags):
@@ -159,12 +254,14 @@ class _EvidenceResults:
 class _LazySeq:
     """list-like view (len, index, negative index, iteration, ==) over one kind of _EvidenceResults output."""
 
-    def __init__(self, results: _EvidenceResults, kind: str):
+    def __init__(self, results: _EvidenceResults, kind: str, indexes: list[int] | None = None):
         self._results = results
-        self._get = results.row if kind == "row" else results.detail
+        self._indexes = indexes  # a filtered view: the result rows it shows, in order; None = all of them
+        get = results.row if kind == "row" else results.detail
+        self._get = get if indexes is None else (lambda i: get(indexes[i]))
 
     def __len__(self) -> int:
-        return self._results.total
+        return self._results.total if self._indexes is None else len(self._indexes)
 
     def __getitem__(self, i):
         if isinstance(i, slice):
@@ -252,13 +349,15 @@ def _rehashed(rows, total: int, jobs: int, progress):
 
 
 def _run_evidence_check(
-    progress=None, db_path: str | None = None, jobs: int | None = None
+    progress=None, db_path: str | None = None, jobs: int | None = None, shell_config: dict | None = None
 ) -> tuple[list[str], list[list[str]]]:
     # db_path: pass an absolute path when this runs on a background thread, so a later chdir cannot redirect it
     # jobs: re-hash worker processes; None = verifier.auto_jobs (VCOC_HASH_JOBS wins, small databases stay serial)
+    # shell_config: when given, a finished check is remembered there for the main menu's header
     path = db_path or cli_module.DEFAULT_DB
     if not Path(path).exists():
         return ["No evidence registered"], [["No evidence in the database."]]
+    began = chain_status.read_counts(os.path.abspath(path))  # what the check covers: later additions show as new
     conn = db.connect(path)
     try:
         total = conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0]
@@ -300,7 +399,11 @@ def _run_evidence_check(
     finally:
         conn.close()
     results = _EvidenceResults(path, flags, keys, verifier_module.merkle_root(leaves))
-    return _LazySeq(results, "row"), _LazySeq(results, "detail")
+    counts = results.summary()
+    chain_status.record_evidence_check(
+        shell_config, os.path.abspath(path), began, total, counts["tampered"], counts["not_logged"], counts["unverifiable"]
+    )
+    return results.view("all")
 
 
 def _run_merkle_check(
@@ -509,12 +612,23 @@ def _run_sidebar_detail_app(
             )
         return loaders[key]
 
+    evidence_view = ["all"]  # the category the Evidence tab lists; only that tab's finished result can be filtered
+
+    def evidence_results():
+        """The finished Evidence result (an _EvidenceResults), or None on any other tab and while it is still loading."""
+        key = active_key()
+        return getattr(results[key][0], "_results", None) if key in results else None
+
     def current():
-        """(loader or None, rows, details) for whichever tab is showing."""
+        """(loader or None, rows, details) for whichever tab is showing, filtered to the chosen category on Evidence."""
         key = active_key()
         if key is None:
             return (None, *view[0])
-        return (loaders.get(key), *results.get(key, ([], [])))
+        rows, details = results.get(key, ([], []))
+        found = getattr(rows, "_results", None)
+        if found is not None and evidence_view[0] != "all":
+            rows, details = found.view(evidence_view[0])
+        return (loaders.get(key), rows, details)
 
     # With a loading_label the first (fast-tab) load runs behind the shared full-screen loading screen, so the plain terminal
     # never shows between the menu and this screen; the result is used as-is, not computed a second time.
@@ -525,6 +639,8 @@ def _run_sidebar_detail_app(
     def load(refresh: bool = False):
         selected_row[0] = 0
         top[0] = 0
+        if refresh:
+            evidence_view[0] = "all"  # a re-check starts from the whole list
         key = active_key()
         if key is None:
             view[0] = preloaded.pop() if preloaded else load_rows()
@@ -545,8 +661,12 @@ def _run_sidebar_detail_app(
         if bg is not None and bg.loading:
             return bg.screen_text()
         # The column's real height, so the rows fill it and the position footer lands on its last line.
-        lines = _sidebar_lines(top_bar is not None)
+        lines = _sidebar_lines(top_bar is not None) - (1 if render_summary() else 0)  # the summary line takes one
         return _sidebar_text(rows, selected_row[0], top, lines - 1 if len(rows) > lines else lines)
+
+    def render_summary() -> str:
+        found = evidence_results()
+        return _summary_line(found.summary(), evidence_view[0]) if found is not None else ""
 
     def render_detail() -> str:
         bg, _, details = current()
@@ -574,6 +694,13 @@ def _run_sidebar_detail_app(
 
     _add_jump_keys(kb, selected_row, lambda: len(current()[1]))
 
+    @kb.add("f")
+    def _(event):
+        if evidence_results() is not None:  # only the Evidence tab's finished result has categories
+            evidence_view[0] = _next_view(evidence_view[0])
+            selected_row[0] = 0
+            top[0] = 0
+
     @kb.add("c-r")
     @kb.add("f5")
     def _(event):
@@ -592,6 +719,7 @@ def _run_sidebar_detail_app(
         top_rows = [
             Window(FormattedTextControl(theme.styled(top_bar, "tabs")), height=1),
             Window(height=1, char=rule, style="class:chrome"),
+            Window(FormattedTextControl(theme.styled(render_summary, "tabs")), height=lambda: 1 if render_summary() else 0),
         ]
 
     body = HSplit(
@@ -610,7 +738,7 @@ def _run_sidebar_detail_app(
                 ]
             ),
             Window(height=1, char=rule, style="class:chrome"),
-            Window(FormattedTextControl(theme.styled(lambda: help_text, "hint")), height=1),
+            Window(FormattedTextControl(theme.styled(lambda: help_text() if callable(help_text) else help_text, "hint")), height=1),
         ]
     )
     app = Application(
@@ -680,12 +808,12 @@ def run_verification_screen(shell_config: dict | None = None) -> None:
         slow_load=(
             lambda: TABS[active_tab[0]] if TABS[active_tab[0]] in ("Evidence", "Merkle") else None,
             {
-                "Evidence": lambda progress: _run_evidence_check(progress=progress, db_path=db_path),
+                "Evidence": lambda progress: _run_evidence_check(progress=progress, db_path=db_path, shell_config=shell_config),
                 "Merkle": lambda progress: _run_merkle_check(db_path=db_path, proof_path=proof_path),
             },
         ),
         extra_keybindings=add_tab_keybindings,
-        help_text=HELP_VERIFICATION,
+        help_text=lambda: HELP_EVIDENCE if TABS[active_tab[0]] == "Evidence" else HELP_VERIFICATION,
         loading_label="Checking the custody chain...",
     )
 

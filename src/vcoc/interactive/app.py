@@ -62,7 +62,7 @@ def _header_fragments(header: status.ChainStatus | None, shell_theme: theme.Them
 
 
 def _frame_style(header: status.ChainStatus | None) -> str:
-    return f"class:state-{header.state}" if header is not None and header.state in ("stale", "tamper") else ""
+    return f"class:state-{header.frame_state}" if header is not None and header.frame_state else ""
 
 
 def _read_status(shell_config: dict) -> status.ChainStatus | None:

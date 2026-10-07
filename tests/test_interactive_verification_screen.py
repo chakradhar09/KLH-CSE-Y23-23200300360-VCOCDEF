@@ -556,7 +556,7 @@ def _fake_evidence_check(monkeypatch, gate=None, done=None, at_gate=None):
     """Stands in for the real re-hash: counts starts, reports progress, and records whether it was cancelled."""
     outcome = {"starts": 0, "finished_normally": False}
 
-    def fake(progress=None, db_path=None):
+    def fake(progress=None, db_path=None, shell_config=None):
         outcome["starts"] += 1
         try:
             progress(1, 1, "EV001", 0, 10)  # raises _Cancelled if this load was superseded or cancelled

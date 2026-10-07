@@ -38,7 +38,7 @@ def test_every_screen_has_its_help_line_as_a_named_constant():
     assert set(help_lines()) == {
         "evidence_search.HELP_SEARCH", "evidence_search.HELP_SEARCH_MULTI",
         "forms.HELP_TEXT", "forms.HELP_PATH", "forms.HELP_OUTPUT",
-        "verification_screen.HELP_SIDEBAR", "verification_screen.HELP_VERIFICATION",
+        "verification_screen.HELP_SIDEBAR", "verification_screen.HELP_VERIFICATION", "verification_screen.HELP_EVIDENCE",
     }
 
 

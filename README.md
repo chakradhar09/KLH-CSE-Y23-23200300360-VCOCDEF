@@ -81,9 +81,25 @@ Chain tab) finishes, together with how many custody events and evidence items ex
 | `● CLEAN · verified 22:40` | Every custody event checked out, and nothing has been added since |
 | `◐ STALE · 3 new since 22:40` | Evidence or custody events were added after that verification: verify again |
 | `✖ TAMPER · event #4 · 22:40` | The last verification found a broken event (stays until the next verification) |
+| `✖ SHORTENED · 2 events gone since 22:40` | The custody log has fewer events than the most ever verified: its newest events were deleted. The rest still verify, so only this comparison can see it. A new database (different first event) does not trigger it; to reset it deliberately, delete `last_verify` from `shell_config.json` |
 | `○ not verified yet` | No verification has been run for this database from this shell |
 
-The menu frame turns amber when stale and red on tamper. The header is a convenience, not evidence: the authoritative
+Beside the chain verdict the header shows the **last evidence check** (the Verification screen's Evidence tab, which re-hashes
+every file against its recorded sha256). It is saved the same way and is independent of the chain verdict. When both fit
+on the line the chain text is shortened first:
+
+| Header | Meaning |
+|---|---|
+| `files ● ALL GREEN` | Every file matched its recorded hash, is logged in the custody log, and nothing was added since |
+| `files ✖ 3 TAMPERED` | 3 files no longer match their recorded hash (stays until the next check); the worst kind is shown |
+| `files ◐ 12 NOT LOGGED` / `5 UNVERIFIABLE` | No tampering, but files no custody event names, or files that are missing or have no recorded source path |
+| `files ◐ STALE · 4 new` | Evidence or custody events were added after the check (a new event can log a file that was not logged) |
+| `files ○ unchecked` | No evidence check has been run for this database from this shell |
+
+Nothing re-verifies by itself: the header only changes when you run Verify chain, open the Verification screen (it checks the
+chain first, and again each time you return to its Chain tab) or run its Evidence tab (Ctrl-R re-runs it). The Evidence tab
+shows `All / All green / Tampered / Not logged / Unverifiable / Logged` counts on a summary line; `f` steps through them.
+The menu frame turns amber when either is stale and red when either is tampered. The header is a convenience, not evidence: the authoritative
 checks are Verify chain, the Verification screen and the standalone `verifier.py`. It reads the database through a
 read-only connection (it never creates or changes it); measured on a database with 92,879 evidence rows it adds about
 2 ms the first time the menu appears in a session and under 0.1 ms afterwards.
@@ -183,7 +199,7 @@ Everything below explains what each menu option / underlying module actually doe
   - `verification_screen.py` — drives the "check evidence integrity" and "verify chain" menu options.
   - `config.py` — reads/writes `shell_config.json`, which remembers key-pair paths and the last chain-verification result between sessions.
   - `theme.py` — the shell's look: palettes (dark, light, high-contrast, plain), the color rules that turn a screen's text into styled fragments without changing it, the ASCII fallback, the shield logo, the progress bar and marquee. Pure: no files, database or network.
-  - `status.py` — the main menu's status header: read-only database counts compared with the last recorded verification.
+  - `status.py` — the main menu's status header: read-only database counts compared with the last recorded chain verification and evidence check.
   - `loading.py` — the full-screen "working" screen with live progress, the block progress bar and Esc-to-cancel.
 
 ### Entry points
