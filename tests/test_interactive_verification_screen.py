@@ -1272,7 +1272,8 @@ def test_group_leaves_can_skip_the_member_counts_and_then_never_parses_member_id
     assert [(g, leaf) for g, leaf, _ in without] == [(g, leaf) for g, leaf, _ in with_counts]
     assert all(count is None for _, _, count in without)
     assert {g: c for g, _, c in with_counts}["F1"] == 32  # unchanged default (merkle-root needs it)
-    assert "json_array_length" not in statements[0] and "json_array_length" in statements[1]
+    queries = [s for s in statements if not s.startswith("PRAGMA")]  # each call first checks the schema version
+    assert "json_array_length" not in queries[0] and "json_array_length" in queries[1]
     conn.close()
 
 

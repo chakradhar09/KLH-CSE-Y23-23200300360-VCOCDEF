@@ -55,6 +55,17 @@ def run_trial(count: int, file_size_kb: int) -> dict:
         ok = verify_proof(digests[proof_index], proof, tree.root)
         verify_time = time.perf_counter() - verify_start
 
+        # One call takes microseconds and is dominated by cold-start noise; the means over many calls are what to quote.
+        reps = 2000
+        t = time.perf_counter()
+        for _ in range(reps):
+            tree.get_proof(proof_index)
+        proof_gen_mean = (time.perf_counter() - t) / reps
+        t = time.perf_counter()
+        for _ in range(reps):
+            verify_proof(digests[proof_index], proof, tree.root)
+        verify_mean = (time.perf_counter() - t) / reps
+
         return {
             "evidence_count": count,
             "file_size_kb": file_size_kb,
@@ -64,6 +75,8 @@ def run_trial(count: int, file_size_kb: int) -> dict:
             "merkle_build_seconds": build_time,
             "merkle_proof_generation_seconds": proof_gen_time,
             "merkle_proof_verification_seconds": verify_time,
+            "merkle_proof_generation_mean_seconds": proof_gen_mean,
+            "merkle_proof_verification_mean_seconds": verify_mean,
             "proof_verified": ok,
             "proof_size_steps": len(proof),
         }

@@ -3,7 +3,7 @@ import tracemalloc
 
 import pytest
 
-from vcoc.hashing import hash_bytes, hash_file, hash_hex_pair
+from vcoc.hashing import hash_bytes, hash_file
 
 
 def test_hash_bytes_matches_stdlib():
@@ -28,12 +28,6 @@ def test_hash_file_detects_single_byte_change(tmp_path):
     tampered_digest = hash_file(path)
 
     assert original_digest != tampered_digest
-
-
-def test_hash_hex_pair_is_order_sensitive():
-    a = hash_bytes(b"a")
-    b = hash_bytes(b"b")
-    assert hash_hex_pair(a, b) != hash_hex_pair(b, a)
 
 
 BOUNDARY_SIZES = [0, 1, 65_535, 65_536, 65_537, 1_048_575, 1_048_576, 1_048_577, 5 * 1_048_576 + 3]
@@ -98,3 +92,60 @@ def test_hash_file_on_chunk_exception_propagates(tmp_path):
 
     with pytest.raises(KeyboardInterrupt):
         hash_file(path, on_chunk=stop)
+
+
+def _big_file(tmp_path, name, size=300_000, seed=0):
+    content = bytes((i * 7 + seed) % 251 for i in range(size))
+    path = tmp_path / name
+    path.write_bytes(content)
+    return path, hashlib.sha256(content).hexdigest()
+
+
+def test_hash_file_reuses_one_read_buffer_across_files(tmp_path):
+    from vcoc import hashing
+
+    a, da = _big_file(tmp_path, "a.bin", seed=1)
+    b, db = _big_file(tmp_path, "b.bin", seed=2)
+
+    assert hash_file(a) == da
+    first = hashing._spare.buf
+    assert hash_file(b) == db
+    assert hashing._spare.buf is first
+
+
+def test_hash_file_nested_call_from_on_chunk_does_not_share_the_buffer(tmp_path):
+    a, da = _big_file(tmp_path, "a.bin", seed=1)
+    b, db = _big_file(tmp_path, "b.bin", seed=2)
+    inner = []
+
+    def on_chunk(done):
+        if not inner:
+            inner.append(hash_file(b, chunk_size=1024 * 1024))
+
+    assert hash_file(a, on_chunk=on_chunk) == da
+    assert inner == [db]
+
+
+def test_hash_file_keeps_the_buffer_when_on_chunk_raises(tmp_path):
+    from vcoc import hashing
+
+    a, da = _big_file(tmp_path, "a.bin", seed=1)
+
+    def boom(done):
+        raise RuntimeError("stop")
+
+    hash_file(a)
+    first = hashing._spare.buf
+    with pytest.raises(RuntimeError):
+        hash_file(a, on_chunk=boom)
+    assert hashing._spare.buf is first
+    assert hash_file(a) == da
+
+
+def test_hash_file_is_correct_with_threads_hashing_at_once(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    files = [_big_file(tmp_path, f"f{i}.bin", seed=i) for i in range(8)]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda f: hash_file(f[0]), files * 5))
+    assert results == [digest for _, digest in files] * 5

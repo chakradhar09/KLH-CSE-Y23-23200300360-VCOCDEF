@@ -21,7 +21,7 @@ import pytest
 
 import cli as cli_module
 from vcoc import db
-from vcoc.merkle import MerkleTree, build_nested_proof, nested_proof_to_dict, verify_nested_proof
+from vcoc.merkle import MERKLE_FORMAT, MerkleTree, build_nested_proof, nested_proof_to_dict, verify_nested_proof
 from vcoc.visualize import build_tree_view
 
 
@@ -79,7 +79,13 @@ def _reference_proof(db_path: str, evidence_id: str) -> dict:
     else:
         proof = build_nested_proof(main_tree, grouped_ids.index(evidence_id), None, None)
         leaf = rec["sha256"]
-    return {"evidence_id": evidence_id, "leaf": leaf, "root": main_tree.root, "proof": nested_proof_to_dict(proof)}
+    return {
+        "evidence_id": evidence_id,
+        "merkle_format": MERKLE_FORMAT,
+        "leaf": leaf,
+        "root": main_tree.root,
+        "proof": nested_proof_to_dict(proof),
+    }
 
 
 def _run(func, **kwargs) -> tuple[str, int | None]:

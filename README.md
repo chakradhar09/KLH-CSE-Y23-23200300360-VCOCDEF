@@ -172,6 +172,53 @@ rewrites it or cuts the log short, it no longer matches the copy you kept. To ch
 copy you kept) to the `verifier.py` command: it fails if the log was cut short or rewritten, and, together with
 `--evidence-index`, if the Merkle root changed. A log that only grew since the anchor still passes.
 
+**Witness-cosigned checkpoints (so the anchor does not depend on the custodian):** a *checkpoint* is a signed commitment to the
+custody log (its size and a Merkle root over its entries). One or more independent *witnesses* (a supervisor, opposing counsel)
+cosign it, but only after checking that it extends the last checkpoint they signed. A rewrite, a truncation or a fork of what
+a witness has already cosigned then cannot be passed off, even by someone who stole the custodian's signing key. Everything moves
+as files (email, USB); there is no network.
+
+```bash
+# 1. each witness, once: make a key pair; send witness.pub to the custodian and to whoever verifies
+python witness.py init-key --key witness.pem --pub witness.pub
+
+# 2. custodian, at intake and at each milestone: write a checkpoint (from the second one on, add a proof from the size the
+#    witness last cosigned, shown by `python witness.py show-state --state witness_state.json`)
+python cli.py checkpoint --out checkpoint.json
+python cli.py checkpoint --out checkpoint.json --since-size 4 --proof-out proof.json
+
+# 3. each witness: cosign (the first time, also give the custodian's public key, which is then trusted and remembered)
+python witness.py cosign --checkpoint checkpoint.json --proof proof.json --state witness_state.json \
+  --key witness.pem --log-key public_key.pem --out cosigned.json     # the next witness cosigns cosigned.json
+
+# 4. anyone: check the log against the cosigned checkpoint, requiring 2 of the witnesses you trust
+python cli.py export --out-dir out
+python verifier.py --log out/custody_log.json --public-key public_key.pem --checkpoint cosigned.json \
+  --witness-key witness1.pub --witness-key witness2.pub --quorum 2 --evidence-index out/evidence_index.json
+```
+
+A witness answers `REFUSED: rollback` (the log is smaller than what it signed), `REFUSED: fork` (a different root at a size it
+already signed), or `REFUSED: the checkpoint does not extend ...` (the proof does not connect the old state to the new one).
+Each leaves its state file and the output untouched, and each is a reason to ask the custodian what happened. The verifier
+reports `NOT WITNESSED` when fewer than the quorum of trusted witnesses signed, and `TAMPER DETECTED` when the log no longer
+contains what the checkpoint committed to (or, with `--evidence-index`, when the evidence set changed). A checkpoint protects
+what it covers: entries added afterwards are unwitnessed until the next one, and a witness trusts a log the first time it sees
+it. Measured costs and the attack scenarios are in `scripts/witness_scenarios.py` (`python scripts/witness_scenarios.py`).
+
+Key custody: a witness keeps `witness.pem` (its private key) and its state file to itself, and backs the state file up, because
+a witness that loses it has to trust the next log it sees on first sight again. Never email a private key; only `*.pub` files
+travel. The custodian's public key must reach each witness by a route other than the checkpoint itself (hand it over at intake),
+since a witness trusts it the first time it is given. If a witness's private key may have leaked, stop counting it in the
+verifier's `--witness-key` list and have a new witness take over.
+
+**Upgrading an older database (Merkle tree rules, schema version 2):** the Merkle tree now follows RFC 6962, so the root stored for each registered folder changed. A database made before that is refused by every command that reads or writes a folder root (`merkle-root`, `merkle-proof`, `export`, registering a folder, the Verification screen) with a message telling you to run:
+
+```bash
+python cli.py migrate-merkle            # --db FILE for another database
+```
+
+It recomputes each folder's root from its members. Before replacing a root it checks the stored one against the members under the old rules; if any folder does not match, nothing is written and the command stops (`--force` converts anyway, but find out why first). The custody log, the signatures and the evidence rows are not touched, so `verify-chain` works before and after. Anchors, exports and Merkle proofs made before the upgrade used the old rules: `verifier.py` says so ("not a tamper finding") instead of comparing them; export and generate them again. Converting a database with two folders of about 416,000 files each took 5.4 s.
+
 **Many files, spare cores:** folder registration (Add evidence, `python cli.py add-evidence --file <folder>`) and the
 shell's Verification > Evidence re-hash choose their worker processes by themselves: with 2,000 or more files they use
 half your CPUs, at most 8 (about 20 MiB each); below that, or on a 1-3 CPU machine, they stay single-process. Results are
@@ -188,9 +235,9 @@ Everything below explains what each menu option / underlying module actually doe
 ### Core library (`src/vcoc/`)
 
 - **`hashing.py`** — computes the SHA-256 hash of an evidence file. This is the fingerprint recorded at intake and recomputed on every later check.
-- **`merkle.py`** — builds a Merkle tree over all registered evidence hashes and produces/verifies inclusion proofs, so you can prove a specific file was part of the evidence set at a given point without re-hashing everything.
+- **`merkle.py`** — builds a Merkle tree over all registered evidence hashes and produces/verifies inclusion proofs, so you can prove a specific file was part of the evidence set at a given point without re-hashing everything. The tree follows RFC 6962 (Certificate Transparency): a leaf is hashed as `SHA-256(0x00 ‖ digest)`, an inner node as `SHA-256(0x01 ‖ left ‖ right)`, and a lone node at the end of a level moves up unchanged. The prefixes stop an inner node being passed off as a leaf, and `[a, b, c]` and `[a, b, c, c]` no longer share a root.
 - **`hash_chain.py`** — the custody log itself: an append-only, hash-linked chain of events (collected, transferred, accessed, etc.), where each entry embeds the hash of the previous one so any edit or deletion breaks the chain visibly.
-- **`ecdsa_signer.py`** — signs each custody log entry with an ECDSA private key and verifies signatures with the matching public key, so entries can't be forged or altered without invalidating the signature.
+- **`ecdsa_signer.py`** — signs each custody log entry with an ECDSA private key (the signed message is hashed with SHA-256) and verifies signatures with the matching public key, so entries can't be forged or altered without invalidating the signature. Entries signed by earlier versions used `python-ecdsa`'s default, SHA-1; they still verify, `verifier.py` reports how many there are, and `--reject-legacy-signatures` refuses them.
 - **`db.py`** — the single store: one SQLite file (`vcoc.db`, stdlib `sqlite3`) with `custody_log`, `evidence`, and `folders` tables. Everything is plain columns so the hash chain stays independently verifiable and queryable; `custody_log` is append-only (SQL triggers reject `UPDATE`/`DELETE`). `python cli.py export --out-dir DIR` regenerates `custody_log.json`, `evidence_index.json`, and `folder_index.json` for `verifier.py` or a third-party auditor.
 - **`storage.py`** — AES-256-GCM helpers plus an `EncryptedStore` (encrypted SQLite blobs, row key bound as associated data). No longer used by the CLI or shell; kept for the storage-overhead experiment (`scripts/storage_overhead.py`).
 - **`models.py`** — shared data structures (evidence records, custody events) used across the library. `CustodyEvent` supports two shapes: legacy single-`evidence_id` entries (unchanged, still hash/verify exactly as before) and newer multi-evidence entries (`evidence_ids` list, plus optional `case_number`/`tag`/`notes`).
@@ -207,7 +254,8 @@ Everything below explains what each menu option / underlying module actually doe
 
 ### Entry points
 
-- **`cli.py`** — the command-line entry point. `python cli.py shell` launches the interactive shell; the same file also exposes one-shot subcommands (`init-keys`, `add-evidence`, `log-event`, `check-evidence`, `verify-chain`, `merkle-root`, `merkle-proof`, `export`) that the shell calls under the hood, for scripting/automation use.
+- **`cli.py`** — the command-line entry point. `python cli.py shell` launches the interactive shell; the same file also exposes one-shot subcommands (`init-keys`, `add-evidence`, `log-event`, `check-evidence`, `verify-chain`, `merkle-root`, `merkle-proof`, `export`, `checkpoint`, `migrate-merkle`) that the shell calls under the hood, for scripting/automation use.
+- **`witness.py`** — a standalone witness for custody-log checkpoints, run by an independent party (`init-key`, `cosign`, `show-state`). It cosigns a checkpoint only if it extends the last one it signed for that log, and imports `verifier.py` for its crypto rather than `vcoc`.
 - **`verifier.py`** — a standalone verifier, intentionally decoupled from `cli.py`. It re-implements hash and signature recomputation from first principles (no shared code path with `vcoc.hash_chain`), so it can independently confirm whether evidence or its custody history has been altered, without trusting the logging system's own self-reported state.
 - **`scripts/tamper_simulation.py`** — an experiment harness that builds a clean chain, applies single-point corruptions (payload, signature, hash-link), and confirms the standalone verifier catches every one.
 
@@ -217,7 +265,7 @@ Everything below explains what each menu option / underlying module actually doe
 pytest
 ```
 
-1,335 tests cover hashing (serial and process-pool), Merkle proof correctness (including nested/folder-batch proofs), hash-chain tamper detection, ECDSA sign/verify, the SQLite single store and its append-only guard, the tamper-simulation harness, multi-evidence custody events, the verifier anchor, the provenance HTML export, and the interactive shell (menu, forms, config, search, multi-select, key-pair setup, themes and the terminal matrix, loading screens, the status header, the Evidence categories and the screen stage).
+1,664 tests cover hashing (serial and process-pool), Merkle proof correctness (including nested/folder-batch proofs), hash-chain tamper detection, ECDSA sign/verify, the SQLite single store and its append-only guard, the tamper-simulation harness, multi-evidence custody events, the verifier anchor, the provenance HTML export, and the interactive shell (menu, forms, config, search, multi-select, key-pair setup, themes and the terminal matrix, loading screens, the status header, the Evidence categories and the screen stage).
 
 Full architecture, sequence diagrams, and a worked example session for the interactive shell are in
 [`Doc/CLI_Interactive_Shell_Architecture.md`](Doc/CLI_Interactive_Shell_Architecture.md).

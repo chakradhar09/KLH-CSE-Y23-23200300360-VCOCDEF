@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import threading
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ProcessPoolExecutor
@@ -10,6 +11,14 @@ from pathlib import Path
 
 DEFAULT_CHUNK_SIZE = 1024 * 1024
 _SMALL_READ = 64 * 1024
+_spare = threading.local()  # one read buffer kept per thread: a fresh 1 MiB bytearray per file cost ~0.22 ms (5x the hashing)
+
+
+def _take_buffer(size: int) -> bytearray:
+    # Taken out of the slot while in use, so a hash_file called from an on_chunk callback gets its own buffer.
+    buf = getattr(_spare, "buf", None)
+    _spare.buf = None
+    return buf if buf is not None and len(buf) == size else bytearray(size)
 
 
 def hash_bytes(data: bytes) -> str:
@@ -35,13 +44,16 @@ def hash_file(
         if done and on_chunk is not None:
             on_chunk(done)
         if more:
-            buf = bytearray(chunk_size)
-            view = memoryview(buf)
-            while n := fh.readinto(buf):
-                digest.update(view[:n])
-                done += n
-                if on_chunk is not None:
-                    on_chunk(done)
+            buf = _take_buffer(chunk_size)
+            try:
+                view = memoryview(buf)
+                while n := fh.readinto(buf):
+                    digest.update(view[:n])
+                    done += n
+                    if on_chunk is not None:
+                        on_chunk(done)
+            finally:
+                _spare.buf = buf
     return digest.hexdigest()
 
 
@@ -124,7 +136,3 @@ def hash_files(entries: Iterable[tuple[str, int | None]], jobs: int) -> Iterator
                 yield from first.result()
     finally:
         pool.shutdown(wait=True, cancel_futures=True)
-
-
-def hash_hex_pair(left_hex: str, right_hex: str) -> str:
-    return hash_bytes(bytes.fromhex(left_hex) + bytes.fromhex(right_hex))

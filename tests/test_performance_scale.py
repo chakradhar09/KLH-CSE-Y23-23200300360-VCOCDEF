@@ -35,7 +35,14 @@ EXISTING_TRIAL_KEYS = {
 
 
 def test_existing_trial_output_keys_are_unchanged():
-    assert set(ps.run_trial(3, 1)) == EXISTING_TRIAL_KEYS
+    result = ps.run_trial(3, 1)
+
+    assert EXISTING_TRIAL_KEYS <= set(result)  # nothing renamed or removed
+    assert set(result) - EXISTING_TRIAL_KEYS == {  # only the repeated-call proof timings were added
+        "merkle_proof_generation_mean_seconds",
+        "merkle_proof_verification_mean_seconds",
+    }
+    assert result["merkle_proof_verification_mean_seconds"] > 0
 
 
 def test_folder_ingest_trial_reports_where_the_time_goes():
@@ -136,7 +143,9 @@ def test_folder_ingest_phases_never_add_up_to_more_than_the_wall_time():
 
 def test_peak_mib_reports_the_process_peak_and_grows_with_real_allocations():
     before = ps.peak_mib()
-    block = bytearray(96 * 2**20)
+    # The peak only rises past what earlier tests in this process already reached, so the block must be bigger than that
+    # peak (not a fixed 96 MiB, which fell short once enough memory had been used before this test ran).
+    block = bytearray((int(before) + 96) * 2**20)
     block[::4096] = b"\x01" * len(block[::4096])  # touch every page so it is really resident
     after = ps.peak_mib()
     del block

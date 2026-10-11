@@ -25,7 +25,14 @@ import pytest
 import cli as cli_module
 from vcoc import db
 from vcoc.hashing import hash_bytes
-from vcoc.merkle import MerkleTree, build_nested_proof, merkle_proof_stream, nested_proof_to_dict, proof_to_dict
+from vcoc.merkle import (
+    MERKLE_FORMAT,
+    MerkleTree,
+    build_nested_proof,
+    merkle_proof_stream,
+    nested_proof_to_dict,
+    proof_to_dict,
+)
 from vcoc.models import Evidence
 
 
@@ -214,7 +221,13 @@ def _reference(db_path: str, evidence_id: str) -> dict:
     else:
         proof = build_nested_proof(main_tree, grouped.index(evidence_id), None, None)
         leaf = rec["sha256"]
-    return {"evidence_id": evidence_id, "leaf": leaf, "root": main_tree.root, "proof": nested_proof_to_dict(proof)}
+    return {
+        "evidence_id": evidence_id,
+        "merkle_format": MERKLE_FORMAT,
+        "leaf": leaf,
+        "root": main_tree.root,
+        "proof": nested_proof_to_dict(proof),
+    }
 
 
 def test_the_proof_is_byte_identical_to_the_old_output_with_stale_rows_unicode_and_odd_sizes(tmp_path, monkeypatch):

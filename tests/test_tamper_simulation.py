@@ -5,7 +5,7 @@ from pathlib import Path
 
 from vcoc.ecdsa_signer import generate_keypair, save_keypair
 from vcoc.hash_chain import HashChain
-from vcoc.merkle import MerkleTree, build_nested_proof, nested_proof_to_dict
+from vcoc.merkle import MERKLE_FORMAT, MerkleTree, build_nested_proof, nested_proof_to_dict
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import verifier as verifier_module
@@ -97,7 +97,13 @@ def test_standalone_verifier_cli_checks_merkle_proof(tmp_path):
     proof_path = tmp_path / "proof.json"
     proof_path.write_text(
         json.dumps(
-            {"evidence_id": "EV_B", "leaf": leaves[1], "root": tree.root, "proof": nested_proof_to_dict(proof)},
+            {
+                "evidence_id": "EV_B",
+                "merkle_format": MERKLE_FORMAT,
+                "leaf": leaves[1],
+                "root": tree.root,
+                "proof": nested_proof_to_dict(proof),
+            },
             indent=2,
         ),
         encoding="utf-8",

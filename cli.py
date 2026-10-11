@@ -16,7 +16,14 @@ from vcoc.ecdsa_signer import generate_keypair, load_signing_key, save_keypair
 from vcoc.hash_chain import HashChain, utc_now_iso
 from vcoc import hashing
 from vcoc.hashing import hash_file
-from vcoc.merkle import MerkleRootBuilder, MerkleTree, NestedProof, merkle_proof_stream, nested_proof_to_dict
+from vcoc.merkle import (
+    MERKLE_FORMAT,
+    MerkleRootBuilder,
+    MerkleTree,
+    NestedProof,
+    merkle_proof_stream,
+    nested_proof_to_dict,
+)
 from vcoc.models import Evidence
 from vcoc.visualize import build_chain_view, format_entry_detail_lines
 
@@ -366,6 +373,7 @@ def cmd_export(args: argparse.Namespace) -> None:
         "chain_entries": len(chain.entries),
         "chain_head_hash": chain.last_hash,
         "merkle_leaves": len(groups),
+        "merkle_format": MERKLE_FORMAT,
         "merkle_root": MerkleTree([leaf for _, leaf, _ in groups]).root if groups else None,
     }
     (out_dir / "anchor.json").write_text(json.dumps(anchor, indent=2), encoding="utf-8")
@@ -429,6 +437,7 @@ def cmd_merkle_proof(args: argparse.Namespace) -> None:
     proof = NestedProof(local_proof=local_proof, subtree_root=subtree_root, folder_proof=folder_proof)
     output = {
         "evidence_id": args.evidence_id,
+        "merkle_format": MERKLE_FORMAT,
         "leaf": leaf,
         "root": root,
         "proof": nested_proof_to_dict(proof),
@@ -438,6 +447,66 @@ def cmd_merkle_proof(args: argparse.Namespace) -> None:
         print(f"Wrote proof -> {args.out}")
     else:
         print(json.dumps(output, indent=2))
+
+
+def cmd_checkpoint(args: argparse.Namespace) -> None:
+    from vcoc import checkpoint as checkpoint_module
+    from vcoc.ecdsa_signer import load_signing_key
+
+    since = args.since_size
+    if (since is None) != (args.proof_out is None):
+        print("--since-size and --proof-out go together: give both to also write a consistency proof, or neither.")
+        sys.exit(1)
+    if since is not None and since < 1:
+        print("--since-size must be at least 1 (the size of the earlier checkpoint).")
+        sys.exit(1)
+    if not Path(args.db).exists():
+        print(f"No custody log found: {args.db} does not exist.")
+        sys.exit(1)
+    if not Path(args.private_key).exists():
+        print(f"Signing key not found: {args.private_key} (create one with `python cli.py init-keys`).")
+        sys.exit(1)
+    with contextlib.closing(db.connect(args.db)) as conn:
+        chain = HashChain.load_db(conn)
+        groups = db.group_leaves(conn, counts=False)
+    if not chain.entries:
+        print(f"There are no custody events to checkpoint in {args.db}.")
+        sys.exit(1)
+    if since is not None and since > len(chain.entries):
+        print(f"--since-size {since} is larger than the log ({len(chain.entries)} entries).")
+        sys.exit(1)
+
+    evidence_root = MerkleTree([leaf for _, leaf, _ in groups]).root if groups else None
+    checkpoint = checkpoint_module.build_checkpoint(chain, load_signing_key(args.private_key), evidence_root)
+    Path(args.out).write_text(json.dumps(checkpoint, indent=2), encoding="utf-8")
+    body = checkpoint["body"]
+    print(f"Checkpoint written -> {args.out}")
+    print(f"  size {body['size']}, root {body['root']}")
+    print(f"  head hash {body['head_hash']}")
+    print(f"  evidence root {body['evidence_root'] or '(no evidence)'}")
+    if since is not None:
+        proof = checkpoint_module.consistency_proof_since([e.entry_hash for e in chain.entries], since)
+        Path(args.proof_out).write_text(json.dumps(proof, indent=2), encoding="utf-8")
+        print(f"Consistency proof from size {since} -> {args.proof_out} ({len(proof['proof'])} hashes)")
+
+
+def cmd_migrate_merkle(args: argparse.Namespace) -> None:
+    if not Path(args.db).exists():
+        print(f"Nothing to migrate: {args.db} does not exist.")
+        sys.exit(1)
+    with contextlib.closing(db.connect(args.db)) as conn:
+        if conn.execute("PRAGMA user_version").fetchone()[0] >= db.SCHEMA_VERSION:
+            print(f"{args.db} already uses the current Merkle tree rules; nothing to do.")
+            return
+        try:
+            changes = db.migrate_merkle(conn, force=args.force)
+        except ValueError as exc:
+            print(f"Not migrated: {exc}")
+            sys.exit(1)
+    print(f"Converted {len(changes)} folder root(s) in {args.db} to the current Merkle tree rules.")
+    for folder_id, old, new in changes:
+        print(f"  {folder_id}: {old} -> {new}")
+    print("Anchors, Merkle proofs and exports made before this are out of date: export and generate them again.")
 
 
 def cmd_shell(args: argparse.Namespace) -> None:
@@ -520,6 +589,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out-dir", default=".")
     p.set_defaults(func=cmd_export)
 
+    p = sub.add_parser("checkpoint", help="Write a signed checkpoint of the custody log (for witnesses and the verifier)")
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument("--private-key", default=DEFAULT_PRIVATE_KEY)
+    p.add_argument("--out", default="checkpoint.json")
+    p.add_argument(
+        "--since-size",
+        type=int,
+        default=None,
+        help="Also write a consistency proof from this earlier checkpoint size (needs --proof-out)",
+    )
+    p.add_argument("--proof-out", default=None, help="Where to write the consistency proof (with --since-size)")
+    p.set_defaults(func=cmd_checkpoint)
+
+    p = sub.add_parser(
+        "migrate-merkle", help="Convert the stored folder Merkle roots of an older database to the current tree rules"
+    )
+    p.add_argument("--db", default=DEFAULT_DB)
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Convert even folders whose stored root does not match their members (check why first)",
+    )
+    p.set_defaults(func=cmd_migrate_merkle)
+
     p = sub.add_parser("shell", help="Launch the interactive shell")
     p.set_defaults(func=cmd_shell)
 
@@ -529,7 +622,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except db.LegacyMerkleFormat as exc:
+        print(exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

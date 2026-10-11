@@ -41,7 +41,7 @@ def test_verify_evidence_index_match_and_logged(tmp_path):
     assert r.rehash_status == "match"
     assert r.logged_status == "logged"
     assert r.ok
-    assert root == digest  # single-leaf tree: root == the leaf itself
+    assert root == sha256_hex(b"\x00" + bytes.fromhex(digest))  # single-leaf tree: the root is the hashed leaf (RFC 6962)
 
 
 def test_verify_evidence_index_logged_via_multi_evidence_event(tmp_path):
@@ -174,7 +174,8 @@ def test_verify_evidence_index_empty_index_no_root():
 def test_merkle_root_matches_two_leaf_hash_pairing():
     leaves = [sha256_hex(b"a"), sha256_hex(b"b")]
     root = merkle_root(leaves)
-    expected = sha256_hex(bytes.fromhex(leaves[0]) + bytes.fromhex(leaves[1]))
+    left, right = (bytes.fromhex(sha256_hex(b"\x00" + bytes.fromhex(leaf))) for leaf in leaves)  # leaf = H(0x00 || digest)
+    expected = sha256_hex(b"\x01" + left + right)  # node = H(0x01 || left || right)
     assert root == expected
 
 
@@ -555,3 +556,29 @@ def test_own_log_entry_wins_over_the_folder_one(tmp_path):
     entries = [{"evidence_id": "F1", "index": 0}, {"evidence_ids": ["F1/m.bin"], "index": 1}]
     results, _ = verify_evidence_index(index, entries, folder_index=folder_index)
     assert results[0].logged_status == "logged"
+
+
+def test_sha256_file_hex_reuses_its_read_buffer_and_nested_calls_stay_correct(tmp_path):
+    import verifier
+
+    def make(name, seed):
+        content = bytes((i * 7 + seed) % 251 for i in range(300_000))
+        path = tmp_path / name
+        path.write_bytes(content)
+        return path, sha256_hex(content)
+
+    a, da = make("a.bin", 1)
+    b, db = make("b.bin", 2)
+    assert verifier.sha256_file_hex(a) == da
+    first = verifier._spare.buf
+    assert verifier.sha256_file_hex(b) == db
+    assert verifier._spare.buf is first
+
+    inner = []
+
+    def on_chunk(done):
+        if not inner:
+            inner.append(verifier.sha256_file_hex(b))
+
+    assert verifier.sha256_file_hex(a, on_chunk=on_chunk) == da
+    assert inner == [db]
