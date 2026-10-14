@@ -552,18 +552,24 @@ def glyph(char: str, theme: Theme) -> str:
 
 # ---- logo --------------------------------------------------------------------------------------------------------
 
-_FULL_ROWS, _ONE_LINE_ROWS = 24, 16  # terminal rows needed for the three-line and the one-line mark
+_FULL_ROWS, _ONE_LINE_ROWS = 24, 18  # terminal rows needed for the three-line and the one-line mark (11 menu items below it)
 
 
-def logo_lines(rows: int) -> list[Fragments]:
-    """The shield mark for a terminal `rows` tall: three lines from 24 rows, one line from 16, none below."""
+# The witness shield, as in the film logo: two halves with a gap, the left an outline in the text colour, the right solid in the
+# accent, tapering to one point. A cell is about twice as tall as it is wide, so at 3 rows the shield is only 6 columns wide;
+# drawn wider it squashes into a heart. The mark is 7 columns on every line (a space and the shield), so the name lines up.
+_SHIELD = [("▛▀▌", "▐██"), ("▌ ▌", "▐██"), ("▝▚▌", "▐▛▘")]
+_SHIELD_ASCII = [("+-+ ", "##"), ("| | ", "##"), ("\\_| ", "#/")]  # drawn, not transliterated
+_SHIELD_ONE, _SHIELD_ONE_ASCII = ("▜▌", "▐▛"), ("\\|", "|/")
+
+
+def logo_lines(rows: int, unicode: bool = True) -> list[Fragments]:
+    """The witness shield for a terminal `rows` tall: three lines from 24 rows, one line from 18, none below."""
     name = "VCoC"
     if rows >= _FULL_ROWS:
-        return [
-            [("class:chrome", "  ╭─────╮")],
-            [("class:chrome", "  │ "), ("class:accent", "◆━◆"), ("class:chrome", " │"), ("class:b", f"  {name}"), ("class:dim", "  Verifiable Chain-of-Custody")],
-            [("class:chrome", "  ╰──▼──╯"), ("class:dim", "  for digital evidence files")],
-        ]
+        text = [[], [("class:b", f"  {name}"), ("class:dim", "  Verifiable Chain-of-Custody")], [("class:dim", "  for digital evidence files")]]
+        return [[("", " "), ("class:b", left), ("class:accent", right)] + after for (left, right), after in zip(_SHIELD if unicode else _SHIELD_ASCII, text)]
     if rows >= _ONE_LINE_ROWS:
-        return [[("class:chrome", " ╭"), ("class:accent", "◆━◆"), ("class:chrome", "╮ "), ("class:b", name), ("class:dim", "  Verifiable Chain-of-Custody")]]
+        left, right = _SHIELD_ONE if unicode else _SHIELD_ONE_ASCII
+        return [[("", " "), ("class:b", left), ("class:accent", right), ("class:b", f" {name}"), ("class:dim", "  Verifiable Chain-of-Custody")]]
     return []

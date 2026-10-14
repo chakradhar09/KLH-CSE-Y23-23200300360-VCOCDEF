@@ -51,9 +51,9 @@ This is the primary way to use the system — an arrow-key-driven menu that cove
 
 ```
 ┌─────────────| Verifiable Chain-of-Custody — Interactive Shell |──────────────┐
-│  ╭─────╮                                                                     │
-│  │ ◆━◆ │  VCoC  Verifiable Chain-of-Custody                                  │
-│  ╰──▼──╯  for digital evidence files                                         │
+│ ▛▀▌▐██                                                                       │
+│ ▌ ▌▐██  VCoC  Verifiable Chain-of-Custody                                    │
+│ ▝▚▌▐▛▘  for digital evidence files                                           │
 │                                                                              │
 │ DB vcoc.db  │  214 items  │  chain ● CLEAN · verified 22:40                  │
 │──────────────────────────────────────────────────────────────────────────────│
@@ -66,7 +66,9 @@ This is the primary way to use the system — an arrow-key-driven menu that cove
 │  6  Merkle proof                                                             │
 │  7  Generate keypair                                                         │
 │  8  Verification (chain / evidence / merkle)                                 │
-│  9  Quit                                                                     │
+│  9  Write checkpoint for witnesses                                           │
+│  0  Verify against cosigned checkpoint                                       │
+│     Quit                                                                     │
 │                                                                              │
 │↑/↓ navigate   1-9,0 jump   Enter select   Esc/q quit                         │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -114,7 +116,7 @@ filename to narrow the list.
 #### Look and terminal support
 
 The shell colors verdicts (`OK` green, `TAMPER` bold red), tints the selected row, and shows a shield logo that
-collapses on short terminals (three lines from 24 rows, one line from 16, none below). Colors only reinforce the words;
+collapses on short terminals (three lines from 24 rows, one line from 18, none below). Colors only reinforce the words;
 every verdict is also text, so nothing depends on seeing color. The look adapts to the terminal it finds:
 
 | Terminal | What it gets |
@@ -196,6 +198,12 @@ python cli.py export --out-dir out
 python verifier.py --log out/custody_log.json --public-key public_key.pem --checkpoint cosigned.json \
   --witness-key witness1.pub --witness-key witness2.pub --quorum 2 --evidence-index out/evidence_index.json
 ```
+
+From the interactive shell, steps 2 and 4 are menu items: **9 Write checkpoint for witnesses** writes the checkpoint (and,
+given the size the witnesses last cosigned, the consistency proof) and prints the `witness.py cosign` command to send with
+it; **0 Verify against cosigned checkpoint** checks the log against the file the witnesses send back (witness keys and quorum
+are remembered). The menu header then shows how much of the log is cosigned, for example
+`witness ◐ 212 of 214 entries cosigned · 2 not yet`. Cosigning stays in `witness.py`, on the witness's own machine.
 
 A witness answers `REFUSED: rollback` (the log is smaller than what it signed), `REFUSED: fork` (a different root at a size it
 already signed), or `REFUSED: the checkpoint does not extend ...` (the proof does not connect the old state to the new one).

@@ -347,14 +347,14 @@ def test_logo_is_three_lines_at_24_rows_or_more():
         assert "VCoC" in joined(lines[1]) and "Verifiable Chain-of-Custody" in joined(lines[1])
 
 
-def test_logo_is_one_line_between_16_and_23_rows():
-    for rows in (16, 20, 23):
+def test_logo_is_one_line_between_18_and_23_rows():
+    for rows in (18, 20, 23):
         lines = theme.logo_lines(rows)
         assert len(lines) == 1 and "VCoC" in joined(lines[0])
 
 
-def test_logo_is_absent_below_16_rows():
-    for rows in (0, 10, 15):
+def test_logo_is_absent_below_18_rows():
+    for rows in (0, 10, 15, 17):
         assert theme.logo_lines(rows) == []
 
 
@@ -367,10 +367,31 @@ def test_logo_fits_an_80_column_terminal_and_survives_the_ascii_fallback():
             assert ascii_text.isascii() and len(ascii_text) == len(text)
 
 
-def test_logo_uses_the_accent_for_the_chain_link_and_chrome_for_the_shield():
+def test_logo_is_the_witness_shield_an_outlined_half_and_a_solid_half():
     full = theme.logo_lines(24)
-    assert ("class:accent", "◆━◆") in full[1]
-    assert full[0][0][0] == "class:chrome"
+    assert [joined(line)[:7] for line in full] == [" ▛▀▌▐██", " ▌ ▌▐██", " ▝▚▌▐▛▘"]
+    assert [(line[1], line[2]) for line in full] == [(("class:b", "▛▀▌"), ("class:accent", "▐██")), (("class:b", "▌ ▌"), ("class:accent", "▐██")),
+                                                     (("class:b", "▝▚▌"), ("class:accent", "▐▛▘"))]  # left the outline in text colour, right solid accent
+
+
+def test_logo_marks_are_the_same_width_on_every_line_so_the_text_after_them_lines_up():
+    full = theme.logo_lines(24)
+    assert all(joined(line)[7:9].strip() == "" for line in full)  # a 7-column mark (a space and the 6-column shield), then the text
+    assert joined(full[1]).index("VCoC") == 9  # the mark, two spaces, the name
+
+
+def test_ascii_logo_is_a_drawn_shield_of_the_same_size_not_question_marks():
+    for rows in (24, 20):
+        uni, asc = theme.logo_lines(rows), theme.logo_lines(rows, unicode=False)
+        assert [joined(line) for line in asc] == [joined(theme.to_ascii(line)) for line in asc]  # already plain ASCII
+        assert all(joined(line).isascii() and "?" not in joined(line) for line in asc)
+        assert [len(joined(line)) for line in asc] == [len(joined(line)) for line in uni]
+    assert [joined(line)[:7] for line in theme.logo_lines(24, unicode=False)] == [" +-+ ##", " | | ##", " \\_| #/"]
+
+
+def test_one_line_logo_is_the_two_halves_of_the_shield_then_the_name():
+    line = theme.logo_lines(20)[0]
+    assert joined(line).startswith(" ▜▌▐▛ VCoC") and ("class:b", "▜▌") in line and ("class:accent", "▐▛") in line
 
 
 # ---- Phase 2 rules: tabs, lists, results, prompts, confirm, command output -----------------------------------------

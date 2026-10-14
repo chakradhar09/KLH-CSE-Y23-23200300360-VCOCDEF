@@ -137,27 +137,28 @@ def test_logo_fragments_are_empty_when_the_terminal_is_too_short():
 
 
 def test_logo_fragments_in_an_ascii_theme_contain_no_non_ascii_character():
-    assert joined(app._logo_fragments(theme.make_theme("dark", unicode=False), 24)).isascii()
+    text = joined(app._logo_fragments(theme.make_theme("dark", unicode=False), 24))
+    assert text.isascii() and " | | ##" in text  # the drawn ASCII shield, not transliterated blocks
 
 
 def test_menu_shows_the_full_logo_at_24_rows_and_every_item_and_the_hint(monkeypatch):
     theme.set_current(theme.make_theme("dark"))
     text = visible_text(vt100_capture(monkeypatch, "q", rows=24))
-    assert "╭─────╮" in text and "Verifiable Chain-of-Custody" in text.split("╭─────╮")[1]
+    assert "▝▚▌▐▛▘" in text and "Verifiable Chain-of-Custody" in text.split("▌ ▌▐██")[1]
     assert all(label in text for label in app.menu.MENU_ITEMS) and "Esc/q quit" in text
 
 
 def test_menu_shows_the_one_line_logo_at_20_rows(monkeypatch):
     theme.set_current(theme.make_theme("dark"))
     text = visible_text(vt100_capture(monkeypatch, "q", rows=20))
-    assert "╭◆━◆╮ VCoC" in text and "╭─────╮" not in text
+    assert "▜▌▐▛ VCoC" in text and "▝▚▌▐▛▘" not in text
     assert all(label in text for label in app.menu.MENU_ITEMS) and "Esc/q quit" in text
 
 
 def test_menu_drops_the_logo_at_15_rows_but_keeps_every_item_and_the_hint(monkeypatch):
     theme.set_current(theme.make_theme("dark"))
     text = visible_text(vt100_capture(monkeypatch, "q", rows=15))
-    assert "VCoC" not in text and "╭" not in text
+    assert "VCoC" not in text and "▐██" not in text
     assert all(label in text for label in app.menu.MENU_ITEMS) and "Esc/q quit" in text
 
 

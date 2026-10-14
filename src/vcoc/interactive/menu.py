@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import os
 import re
 import time
@@ -16,7 +17,8 @@ from . import config as config_module
 from . import forms, theme
 from .evidence_search import search_evidence_db, search_evidence_multi_db
 from .loading import run_with_loading
-from .verification_screen import run_verification_screen, run_verify_chain_screen
+from .verification_screen import _load_entries, run_verification_screen, run_verify_chain_screen
+from ..ecdsa_signer import load_verifying_key
 
 MENU_ITEMS = [
     "Add evidence",
@@ -27,6 +29,8 @@ MENU_ITEMS = [
     "Merkle proof",
     "Generate keypair",
     "Verification (chain / evidence / merkle)",
+    "Write checkpoint for witnesses",  # added after the existing items so their digit shortcuts do not move
+    "Verify against cosigned checkpoint",
     "Quit",
 ]
 
@@ -324,6 +328,97 @@ def action_merkle_proof(shell_config: dict) -> None:
     forms.show_output("Merkle proof", output)
 
 
+def action_write_checkpoint(shell_config: dict) -> None:
+    """The custodian's half of witnessing: a signed checkpoint of the log (and the consistency proof from the size the
+    witnesses last cosigned) to send to them. They cosign with witness.py on their own machine, never in this shell."""
+    title = "Write checkpoint for witnesses"
+    if not ensure_keys(shell_config):
+        return
+    out = forms.prompt_path(title, "Checkpoint file:", "checkpoint.json")
+    if out is None:
+        return
+    since = forms.prompt_text(title, "Size of the last checkpoint the witnesses cosigned (blank if none):")
+    if since is None:
+        return
+    ns = _defaults()
+    ns.private_key, ns.out, ns.since_size, ns.proof_out = shell_config["private_key"], out, None, None
+    if since.strip():
+        if not since.strip().isdigit():
+            forms.show_output(title, f"'{since.strip()}' is not a size: give the whole number of entries the last cosigned "
+                                     "checkpoint covered, or leave it blank for the first checkpoint.")
+            return
+        ns.since_size, ns.proof_out = int(since), str(Path(out).with_name(Path(out).stem + "_proof.json"))
+    output = _run_cmd_loading(title, "Signing a checkpoint of the custody log...", cli_module.cmd_checkpoint, ns)
+    if "Checkpoint written" in output:
+        shell_config["checkpoint"] = os.path.abspath(out)
+        config_module.save_config(config_module.DEFAULT_CONFIG_PATH, shell_config)
+        proof = f" --proof {ns.proof_out}" if ns.proof_out else ""
+        output += (f"\n\nSend {out}{' and ' + ns.proof_out if ns.proof_out else ''} to each witness. On their own machine they run:\n"
+                   f"  python witness.py cosign --checkpoint {out}{proof} --state <their state.json> --key <their key>"
+                   f" --log-key {shell_config['public_key']} --out <cosigned.json>\n"
+                   "Then check the log against the file they send back with 'Verify against cosigned checkpoint'.")
+    forms.show_output(title, output)
+
+
+def _witness_check(db_path: str, checkpoint_path: str, public_key: str, witness_keys: list[str], quorum: int):
+    """(report text, record or None): does the log still hold exactly what the checkpoint commits to (it may have grown),
+    and did at least `quorum` of the trusted witnesses cosign it? The rules are the verifier's, not a copy."""
+    try:
+        checkpoint = json.loads(Path(checkpoint_path).read_text(encoding="utf-8"))
+        entries = _load_entries(db_path) or []
+        problem = verifier_module.checkpoint_problem(checkpoint, entries, load_verifying_key(public_key))
+        valid, rejected = verifier_module.cosigning_witnesses(checkpoint, [load_verifying_key(k) for k in witness_keys])
+    except Exception as exc:  # unreadable checkpoint or key file: say so, record nothing
+        return f"Error: {exc}", None
+    body = checkpoint.get("body") if isinstance(checkpoint, dict) else None
+    size = body.get("size") if isinstance(body, dict) and isinstance(body.get("size"), int) else 0
+    ok = problem is None and len(valid) >= quorum
+    lines = [f"Result      {'OK' if ok else 'FAIL'}",
+             f"Checkpoint  OK · the log still holds the {size:,} entries it covers" if problem is None else f"Checkpoint  FAIL · {problem}",
+             f"Witnesses   {'OK' if len(valid) >= quorum else 'NOT ENOUGH'} · cosigned by {len(valid)} of {len(witness_keys)} "
+             f"trusted witnesses (quorum {quorum})"]
+    if rejected:
+        lines.append(f"            {len(rejected)} cosignature(s) not counted: unknown witness or invalid signature")
+    since = len(entries) - size
+    if problem is None and since > 0:
+        lines.append(f"Not yet     {since:,} {'entry' if since == 1 else 'entries'} added since the checkpoint "
+                     f"{'is' if since == 1 else 'are'} not witnessed yet: write a new checkpoint for the witnesses")
+    record = {"at": time.time(), "db": db_path, "ok": ok, "size": size, "events": len(entries), "cosigners": len(valid),
+              "quorum": quorum, "first_hash": entries[0]["entry_hash"] if entries else ""}
+    return "\n".join(lines), record
+
+
+def action_verify_checkpoint(shell_config: dict) -> None:
+    """Check the log against a checkpoint the witnesses cosigned and remember the result for the menu header."""
+    title = "Verify against cosigned checkpoint"
+    if not ensure_keys(shell_config):
+        return
+    path = forms.prompt_path(title, "Cosigned checkpoint file:", shell_config.get("checkpoint", "checkpoint.json"))
+    if path is None:
+        return
+    keys = forms.prompt_text(title, "Witness public keys (comma-separated):", ",".join(shell_config.get("witness_keys", [])))
+    if keys is None:
+        return
+    quorum = forms.prompt_text(title, "How many witnesses must have cosigned (quorum):", str(shell_config.get("quorum", 1)))
+    if quorum is None:
+        return
+    key_paths = [k.strip() for k in keys.split(",") if k.strip()]
+    if not quorum.strip().isdigit() or not 1 <= int(quorum) <= len(key_paths):
+        forms.show_output(title, f"The quorum must be a whole number from 1 to the number of witness keys given ({len(key_paths)}).")
+        return
+    missing = [p for p in [path, *key_paths] if not Path(p).exists()]
+    if missing:
+        forms.show_output(title, "Not found: " + ", ".join(missing))
+        return
+    db_path = os.path.abspath(cli_module.DEFAULT_DB)
+    text, record = run_with_loading(title, lambda: _witness_check(db_path, path, shell_config["public_key"], key_paths, int(quorum)),
+                                    "Checking the log against the cosigned checkpoint...")
+    if record is not None:
+        shell_config.update(checkpoint=os.path.abspath(path), witness_keys=key_paths, quorum=int(quorum))
+        config_module.record_witness_check(shell_config, record)
+    forms.show_output(title, text)
+
+
 def action_init_keys(shell_config: dict) -> None:
     ns = _defaults()
     private_key = forms.prompt_path("Generate keypair", "Private key path:", ns.private_key)
@@ -351,5 +446,7 @@ ACTIONS = [
     action_merkle_proof,
     action_init_keys,
     action_verification,
+    action_write_checkpoint,
+    action_verify_checkpoint,
     None,
 ]

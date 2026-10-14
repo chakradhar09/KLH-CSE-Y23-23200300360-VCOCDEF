@@ -57,6 +57,11 @@ def record_evidence_check(shell_config: dict, record: dict, path: str | None = N
     _remember(shell_config, "last_evidence_check", record, path)
 
 
+def record_witness_check(shell_config: dict, record: dict, path: str | None = None) -> None:
+    """Remember the latest check of the log against a witness-cosigned checkpoint, the same way."""
+    _remember(shell_config, "last_witness", record, path)
+
+
 def _count(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
@@ -75,6 +80,20 @@ def last_verify(shell_config: dict, db_path: str) -> dict | None:
         and (record.get("bad_event") is None or _count(record.get("bad_event")))
         and ("high_water" not in record or _count(record["high_water"]))  # older records have neither of these two
         and ("first_hash" not in record or isinstance(record["first_hash"], str))
+    )
+    return record if well_formed else None
+
+
+def last_witness(shell_config: dict, db_path: str) -> dict | None:
+    """The recorded witness-checkpoint check of this database, or None when there is none or the entry is malformed."""
+    record = shell_config.get("last_witness")
+    if not isinstance(record, dict) or record.get("db") != db_path:
+        return None
+    well_formed = (
+        isinstance(record.get("at"), (int, float)) and not isinstance(record.get("at"), bool)
+        and isinstance(record.get("ok"), bool)
+        and all(_count(record.get(key)) for key in ("size", "events", "cosigners", "quorum"))
+        and isinstance(record.get("first_hash", ""), str)
     )
     return record if well_formed else None
 

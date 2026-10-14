@@ -41,6 +41,7 @@ class ChainStatus:
     files_n: int = 0  # files behind the verdict (tampered, not logged or unverifiable), or rows added since a stale check
     files_kind: str = ""  # TAMPERED | NOT LOGGED | UNVERIFIABLE
     files_at: float | None = None
+    witness: str | None = None  # the line under the status line: how much of the log the last cosigned checkpoint covers
 
     @property
     def frame_state(self) -> str:
@@ -115,6 +116,22 @@ def _files_status(shell_config: dict, db_path: str, counts: Counts) -> dict:
     return {"files": "clean", "files_at": at}
 
 
+def _witness_text(shell_config: dict, db_path: str, counts: Counts) -> str | None:
+    """None until the log has been checked against a witness-cosigned checkpoint (or when that check was of another log)."""
+    record = config.last_witness(shell_config, db_path)
+    if record is None or (record.get("first_hash") and counts.first_hash and record["first_hash"] != counts.first_hash):
+        return None
+    if not record["ok"]:
+        return "witness ✖ FAIL · see 'Verify against cosigned checkpoint'"
+    size, events = record["size"], counts.events
+    if events < size:
+        return f"witness ✖ {size - events:,} cosigned entries missing"
+    if events > size:  # the witnesses protect only what they have cosigned: say how much is not covered yet
+        return f"witness ◐ {size:,} of {events:,} entries cosigned · {events - size:,} not yet"
+    n = record["cosigners"]
+    return f"witness ● all {size:,} entries cosigned · {n} witness{'es' * (n != 1)}, quorum {record['quorum']}"
+
+
 def current_status(shell_config: dict, db_path: str) -> ChainStatus:
     name = os.path.basename(db_path)
     if not os.path.exists(db_path):
@@ -122,7 +139,7 @@ def current_status(shell_config: dict, db_path: str) -> ChainStatus:
     counts = read_counts(db_path)
     if counts is None:
         return ChainStatus("unavailable", name, 0, None, 0, None)
-    files = _files_status(shell_config, db_path, counts)
+    files = dict(_files_status(shell_config, db_path, counts), witness=_witness_text(shell_config, db_path, counts))
     record = config.last_verify(shell_config, db_path)
     if record is None:
         return ChainStatus("unverified", name, counts.items, None, 0, None, **files)

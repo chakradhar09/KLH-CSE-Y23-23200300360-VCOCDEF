@@ -28,8 +28,7 @@ HELP_OUTPUT = " ↑/↓/PgUp/PgDn scroll   any other key returns to menu"
 
 
 def prompt_text(title: str, label: str, default: str = "") -> str | None:
-    buf = Buffer(multiline=False)
-    buf.text = default
+    buf = Buffer(multiline=False, document=Document(default))  # cursor after the prefilled answer, so typing adds to it
 
     kb = KeyBindings()
 
@@ -78,8 +77,7 @@ def _glob_matches(text: str, dirs_only: bool) -> list[Path]:
 
 
 def prompt_path(title: str, label: str, default: str = "", dirs_only: bool = False) -> str | None:
-    buf = Buffer(multiline=False)
-    buf.text = default
+    buf = Buffer(multiline=False, document=Document(default))  # cursor after the prefilled answer, so typing adds to it
     matches: list[Path] = _glob_matches(default, dirs_only)
     selected = [-1]
 

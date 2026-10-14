@@ -22,7 +22,7 @@ def _render_menu(selected: int) -> str:
     lines = []
     for i, label in enumerate(menu.MENU_ITEMS):
         marker = "▸" if i == selected else " "
-        digit = "0" if i == 9 else str(i + 1)
+        digit = str(i + 1) if i < 9 else "0" if i == 9 else " "  # keys 1-9, 0 reach the first ten; later items have no number
         lines.append(f"{marker} {digit}  {label}")
     lines.append("")
     lines.append("↑/↓ navigate   1-9,0 jump   Enter select   Esc/q quit")
@@ -43,7 +43,7 @@ def _menu_fragments(selected: int, shell_theme: theme.Theme, width: int | None =
 def _logo_fragments(shell_theme: theme.Theme, rows: int):
     """The logo for a terminal `rows` tall, each line ended by a newline plus one blank line; empty when it does not fit."""
     out = []
-    for line in theme.logo_lines(rows):
+    for line in theme.logo_lines(rows, shell_theme.unicode):
         out.extend(line)
         out.append(("", "\n"))
     if out:
@@ -52,11 +52,14 @@ def _logo_fragments(shell_theme: theme.Theme, rows: int):
 
 
 def _header_fragments(header: status.ChainStatus | None, shell_theme: theme.Theme, rows: int, width: int | None):
-    """The status header for a terminal `rows` tall: a line, a rule and a blank line from 18 rows, just the line from 14."""
-    if header is None or rows < 14:
+    """The status header for a terminal `rows` tall: a line, a rule and a blank line from 20 rows, just the line from 16;
+    from 24 rows the witness line too, when the log has been checked against a cosigned checkpoint."""
+    if header is None or rows < 16:  # below 16 rows the 11 menu items and the hint need every row
         return []
     out = list(theme.colorize(status.header_text(header), "header", shell_theme)) + [("", "\n")]
-    if rows >= 18:
+    if rows >= 24 and header.witness:  # its own line: the status line is already full at 78 columns
+        out += list(theme.colorize(" " + header.witness, "header", shell_theme)) + [("", "\n")]
+    if rows >= 20:
         out += [("class:chrome", "─" * (width or 78)), ("", "\n"), ("", "\n")]
     return theme.for_display(out, shell_theme)
 

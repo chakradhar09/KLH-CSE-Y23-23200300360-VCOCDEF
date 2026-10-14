@@ -104,16 +104,16 @@ def test_the_plain_theme_marks_a_tamper_frame_with_bold_only():
 
 # ---- layout ----------------------------------------------------------------------------------------------------------
 
-def test_the_header_block_is_the_line_a_rule_and_a_blank_from_18_rows_just_the_line_from_14_and_absent_below():
+def test_the_header_block_is_the_line_a_rule_and_a_blank_from_20_rows_just_the_line_from_16_and_absent_below():
     dark = theme.make_theme("dark")
     result = status_of("clean")
     tall = joined(app._header_fragments(result, dark, 24, 78))
     assert tall.count("\n") == 3 and "─" * 78 in tall and "CLEAN" in tall  # the line, the rule and a blank line each end a line
-    assert joined(app._header_fragments(result, dark, 18, 78)).count("\n") == 3
-    short = joined(app._header_fragments(result, dark, 17, 78))
+    assert joined(app._header_fragments(result, dark, 20, 78)).count("\n") == 3
+    short = joined(app._header_fragments(result, dark, 19, 78))
     assert short.count("\n") == 1 and "CLEAN" in short
-    assert joined(app._header_fragments(result, dark, 14, 78)).count("\n") == 1
-    assert app._header_fragments(result, dark, 13, 78) == []
+    assert joined(app._header_fragments(result, dark, 16, 78)).count("\n") == 1
+    assert app._header_fragments(result, dark, 15, 78) == []
     assert app._header_fragments(None, dark, 24, 78) == []
 
 
@@ -122,14 +122,14 @@ def test_the_header_block_in_the_ascii_fallback_is_ascii():
     assert text.isascii() and "x TAMPER" in text and "-" * 78 in text
 
 
-@pytest.mark.parametrize("rows", [24, 20, 18, 17, 16, 15, 14, 13])
+@pytest.mark.parametrize("rows", [24, 20, 19, 18, 17, 16, 15])  # 15: the smallest that holds all 11 items and the hint
 def test_every_menu_item_and_the_hint_stay_visible_with_the_header_at_every_height(rows):
     theme.set_current(theme.make_theme("dark"))
     _, raw = drive(lambda: app._run_main_menu(status_of("clean")), "q", rows=rows)
     text = visible(raw)
     assert all(label in text for label in app.menu.MENU_ITEMS) and "Esc/q quit" in text
-    assert ("CLEAN" in text) is (rows >= 14)
-    assert ("VCoC" in text) is (rows >= 16)
+    assert ("CLEAN" in text) is (rows >= 16)
+    assert ("VCoC" in text) is (rows >= 18)
 
 
 def test_the_menu_without_a_header_is_exactly_as_before():

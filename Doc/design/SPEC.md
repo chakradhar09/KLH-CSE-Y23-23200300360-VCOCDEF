@@ -25,7 +25,7 @@ Give the interactive shell (`python cli.py shell`) a recognizable, sober "forens
 4. `NO_COLOR` follows the no-color.org convention: disables color but keeps attributes (bold / reverse / dim). Theme choice is an env var, `VCOC_THEME` (`dark` | `light` | `high-contrast` | `plain`), default `dark`. No config-file key and no CLI flag in this slice.
 5. Existing glyphs `▸` and `─` stay inside the string renderers. The ASCII fallback is applied **at display time** in the style layer, never inside the renderers, so renderer-level tests are unaffected on any OS.
 6. Screens in scope: main menu (`app.py`), verification screens (`verification_screen.py`), loading screen (`loading.py`). Forms and evidence-search screens only inherit the frame/chrome style, not text colorizing.
-7. Logo thresholds by terminal rows: `>= 24` full 3-line mark, `16–23` one-line mark, `< 16` none (menu + hint need ~13 rows and must always fit).
+7. Logo thresholds by terminal rows: `>= 24` full 3-line mark, `18–23` one-line mark, `< 18` none (the 11 menu items + hint need 15 rows and must always fit; raised from 16 when the two witness items were added, 2026-10-14). Status line from 16 rows, its rule from 20, the witness line from 24.
 
 ## Tech Stack
 - Python 3, `prompt_toolkit>=3.0` (installed 3.0.53). No new dependencies.
@@ -83,15 +83,24 @@ def app_style(theme: Theme) -> Style: ...
 
 Color roles (dark preset): chrome gray, accent amber (`#d9a441`), OK green, TAMPER bold red on default background, hints dim, selection = reverse + accent. High-contrast: bold white/yellow, TAMPER = reverse red. Plain: bold / reverse / dim only.
 
-Logo (Shield: a chain link inside a shield; decided 2026-10-03), full / one-line:
+Logo (witness shield, as in the film logo: two halves with a gap, the left an outline in the text colour, the right solid in
+the accent, one point; decided 2026-10-14, replacing the 2026-10-03 chain-link shield). A cell is about twice as tall as wide,
+so at 3 rows the shield is 6 columns wide; the first block version spread it over 8 and read as a heart. Full / one-line:
 ```
-  ╭─────╮
-  │ ◆━◆ │  VCoC  Verifiable Chain-of-Custody
-  ╰──▼──╯  for digital evidence files
+ ▛▀▌▐██
+ ▌ ▌▐██  VCoC  Verifiable Chain-of-Custody
+ ▝▚▌▐▛▘  for digital evidence files
 
- ╭◆━◆╮ VCoC  Verifiable Chain-of-Custody
+ ▜▌▐▛ VCoC  Verifiable Chain-of-Custody
 ```
-ASCII fallback: `╭╮╰╯` → `+`, `│` → `|`, `─` → `-`, `◆` → `#`, `━` → `=`, `▼` → `v`.
+ASCII fallback: a drawn shield of the same size (`logo_lines(rows, unicode=False)`), not a transliteration of the blocks:
+```
+ +-+ ##
+ | | ##  VCoC  Verifiable Chain-of-Custody
+ \_| #/  for digital evidence files
+
+ \||/ VCoC  Verifiable Chain-of-Custody
+```
 
 ## Code Style
 Match the surrounding module style: `from __future__ import annotations`, short docstrings that explain *why*, type hints on public functions, no comments restating code.

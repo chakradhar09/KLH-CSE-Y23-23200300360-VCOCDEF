@@ -310,6 +310,8 @@ those functions already print via `python cli.py <subcommand>`.
 | Merkle root | none | `cmd_merkle_root` |
 | Merkle proof | search → pick evidence_id, optional output path | `cmd_merkle_proof` |
 | Generate keypair | confirm/override default key paths | `cmd_init_keys` |
+| Write checkpoint for witnesses | checkpoint path; size the witnesses last cosigned (blank: none) | `cmd_checkpoint` |
+| Verify against cosigned checkpoint | cosigned checkpoint, witness public keys, quorum (all remembered) | `verifier.checkpoint_problem`, `verifier.cosigning_witnesses` |
 | Quit | — | closes `EncryptedStore` if open, exits `Application` |
 
 ---

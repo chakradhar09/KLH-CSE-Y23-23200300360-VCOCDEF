@@ -63,3 +63,22 @@ def test_dirs_only_filters_results_to_directories(tmp_path):
     result = run_prompt_path(partial + "\t\r", dirs_only=True)
 
     assert result == str(tmp_path / "adir")
+
+
+def run_prompt_text(keys: str, **kwargs) -> str | None:
+    with create_pipe_input() as pipe_input:
+        pipe_input.send_text(keys)
+        with create_app_session(input=pipe_input, output=DummyOutput()):
+            return forms.prompt_text("Title", "Label:", **kwargs)
+
+
+def test_typing_after_a_prefilled_text_answer_adds_to_its_end():
+    assert run_prompt_text("2\r", default="1") == "12"
+
+
+def test_backspace_after_a_prefilled_text_answer_replaces_it():
+    assert run_prompt_text("\x7f2\r", default="1") == "2"
+
+
+def test_typing_after_a_prefilled_path_adds_to_its_end(tmp_path):
+    assert run_prompt_path("x\r", default="checkpoint") == "checkpointx"
