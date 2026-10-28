@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 
 from vcoc import db
-from vcoc.interactive import config, status
+from vcoc.interactive import status
 from vcoc.interactive import verification_screen as vs
 
 from test_evidence_check_parallel import _mixed_rows

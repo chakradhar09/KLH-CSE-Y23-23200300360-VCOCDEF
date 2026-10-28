@@ -18,7 +18,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 
-import cli as cli_module
 from vcoc import db
 from vcoc.ecdsa_signer import generate_keypair, save_keypair
 from vcoc.hash_chain import HashChain

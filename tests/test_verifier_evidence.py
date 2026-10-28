@@ -11,13 +11,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import cli as cli_module
-from vcoc.merkle import verify_nested_proof
 from verifier import (
-    EvidenceCheckResult,
     merkle_root,
     sha256_hex,
     verify_evidence_index,
-    verify_merkle_proof,
     verify_nested_proof as verifier_verify_nested_proof,
 )
 

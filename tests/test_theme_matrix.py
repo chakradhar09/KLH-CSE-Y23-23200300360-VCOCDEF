@@ -8,7 +8,6 @@ console) still deserve a human look, but any regression in what each one is sent
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 

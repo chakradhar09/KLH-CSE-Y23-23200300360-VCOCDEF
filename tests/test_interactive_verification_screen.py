@@ -10,7 +10,6 @@ event / Verify chain (which do use shell_config) work fine.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 

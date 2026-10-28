@@ -22,7 +22,7 @@ from vcoc.hash_chain import HashChain
 from vcoc.interactive import app, config, status
 from vcoc.interactive import verification_screen as vs
 
-from test_last_verify import NOW, at, make_db, record, status_of
+from test_last_verify import NOW, make_db, record, status_of
 
 
 # ---- the record keeps a high-water mark -------------------------------------------------------------------------------------

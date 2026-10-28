@@ -24,7 +24,7 @@ from vcoc import db
 from . import config as config_module
 from . import status as chain_status
 from . import theme
-from .evidence_search import _add_jump_keys, _visible_height, window_text
+from .evidence_search import _add_jump_keys, window_text
 from .loading import run_with_loading
 from vcoc.hash_chain import HashChain
 from vcoc.visualize import build_chain_view, format_entry_detail_lines
@@ -432,7 +432,7 @@ def _run_merkle_check(
         return ["No evidence registered"], [["No evidence in the database -- nothing to build a Merkle root from."]]
     root = verifier_module.merkle_root(leaves)
     rows = [f"Root over {len(leaves)} leaf(ves)/folder(s)"]
-    details = [[f"Recomputed Merkle root (from the evidence table, independent implementation):", root]]
+    details = [["Recomputed Merkle root (from the evidence table, independent implementation):", root]]
 
     proof_path = proof_path or "proof.json"
     if Path(proof_path).exists():

@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 
 from test_theme_screens import ACCENT, OK_GREEN, drive, visible
-from vcoc.interactive import forms, menu, theme
+from vcoc.interactive import menu, theme
 from vcoc.interactive.loading import loading_text, run_with_loading
 
 MB = 1024 * 1024

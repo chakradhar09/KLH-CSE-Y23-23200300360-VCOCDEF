@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt ruff pip-audit
+
+      # Pyflakes only: undefined names, unused imports. Style rules stay advisory.
+      - name: Lint
+        run: ruff check --select F .
+
+      - name: Test
+        run: python -m pytest -q
+
+      # PYSEC-2026-1325: ecdsa Minerva timing attack, no upstream fix.
+      # Drop this ignore once signing moves to the cryptography package.
+      - name: Security audit
+        run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-1325

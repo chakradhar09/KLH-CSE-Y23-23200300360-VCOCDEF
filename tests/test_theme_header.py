@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import pytest
 
 from test_last_verify import at, make_db, status_of
-from test_theme_screens import TAMPER_RED, WARN, drive, sequences, visible
+from test_theme_screens import drive, visible
 from vcoc import db
 from vcoc.ecdsa_signer import generate_keypair, save_keypair
 from vcoc.hash_chain import HashChain

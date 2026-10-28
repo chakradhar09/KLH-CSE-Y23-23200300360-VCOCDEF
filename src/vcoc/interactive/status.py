@@ -224,7 +224,7 @@ def header_text(status: ChainStatus, now: float | None = None) -> str:
         verbose = {
             "clean": f"chain ● CLEAN · verified {when}",
             "stale": f"chain ◐ STALE · {status.new:,} new since {when}",
-            "tamper": f"chain ✖ TAMPER · " + (f"event #{status.bad_event} · " if status.bad_event is not None else "") + when,
+            "tamper": "chain ✖ TAMPER · " + (f"event #{status.bad_event} · " if status.bad_event is not None else "") + when,
             "shortened": f"chain ✖ SHORTENED · {status.removed:,} event{'s' * (status.removed != 1)} gone since {when}",
             "unverified": "chain ○ not verified yet",
         }[status.state]
