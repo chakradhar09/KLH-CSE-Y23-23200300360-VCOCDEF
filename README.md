@@ -1,5 +1,13 @@
 # Verifiable Chain-of-Custody for Digital Evidence Files
 
+[![CI](https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF/actions/workflows/ci.yml/badge.svg)](https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF)](https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF/releases)
+
+**Current release: v4.0.0.** Witness-cosigned checkpoints, an RFC 6962 Merkle tree with consistency proofs, SHA-256
+signatures and process-pool hashing. Databases made by v3.x need `python cli.py migrate-merkle` once (see
+[Upgrading an older database](#upgrading-an-older-database)). Release notes are on the
+[Releases](https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF/releases) page.
+
 ## Team Members
 
 | S. No. | University ID | Name                           |
@@ -21,14 +29,14 @@ Digital forensic investigations depend on the integrity of evidence artifacts li
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.10+ (CI runs 3.11)
 - `pip`
 
 ### 1. Clone (or download) the repository
 
 ```bash
 git clone https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF.git
-cd verifiable-coc
+cd KLH-CSE-Y23-23200300360-VCOCDEF
 ```
 
 Alternatively, download the ZIP from the repository's **Code → Download ZIP** button and extract it.
@@ -39,7 +47,7 @@ Alternatively, download the ZIP from the repository's **Code → Download ZIP** 
 pip install -r requirements.txt
 ```
 
-Key dependencies: `ecdsa` (digital signatures), `cryptography` (AES-GCM encryption at rest), `prompt_toolkit` (interactive shell). `hashlib`, `json`, `sqlite3`, and `argparse` are part of the Python standard library and need no separate install.
+Key dependencies: `ecdsa` (digital signatures), `prompt_toolkit` (interactive shell), `cryptography` (only for the AES-GCM storage-overhead experiment; the store itself is not encrypted), `matplotlib` (paper figures). `hashlib`, `json`, `sqlite3`, and `argparse` are part of the Python standard library and need no separate install.
 
 ### 3. Run the interactive shell
 
@@ -219,7 +227,9 @@ travel. The custodian's public key must reach each witness by a route other than
 since a witness trusts it the first time it is given. If a witness's private key may have leaked, stop counting it in the
 verifier's `--witness-key` list and have a new witness take over.
 
-**Upgrading an older database (Merkle tree rules, schema version 2):** the Merkle tree now follows RFC 6962, so the root stored for each registered folder changed. A database made before that is refused by every command that reads or writes a folder root (`merkle-root`, `merkle-proof`, `export`, registering a folder, the Verification screen) with a message telling you to run:
+#### Upgrading an older database
+
+**Merkle tree rules, schema version 2 (v4.0.0):** the Merkle tree now follows RFC 6962, so the root stored for each registered folder changed. A database made before that is refused by every command that reads or writes a folder root (`merkle-root`, `merkle-proof`, `export`, registering a folder, the Verification screen) with a message telling you to run:
 
 ```bash
 python cli.py migrate-merkle            # --db FILE for another database
@@ -242,9 +252,10 @@ Everything below explains what each menu option / underlying module actually doe
 
 ### Core library (`src/vcoc/`)
 
-- **`hashing.py`** — computes the SHA-256 hash of an evidence file. This is the fingerprint recorded at intake and recomputed on every later check.
+- **`hashing.py`** — computes the SHA-256 hash of an evidence file. This is the fingerprint recorded at intake and recomputed on every later check. Files are streamed through one reused read buffer, and large batches are hashed in a process pool.
 - **`merkle.py`** — builds a Merkle tree over all registered evidence hashes and produces/verifies inclusion proofs, so you can prove a specific file was part of the evidence set at a given point without re-hashing everything. The tree follows RFC 6962 (Certificate Transparency): a leaf is hashed as `SHA-256(0x00 ‖ digest)`, an inner node as `SHA-256(0x01 ‖ left ‖ right)`, and a lone node at the end of a level moves up unchanged. The prefixes stop an inner node being passed off as a leaf, and `[a, b, c]` and `[a, b, c, c]` no longer share a root.
 - **`hash_chain.py`** — the custody log itself: an append-only, hash-linked chain of events (collected, transferred, accessed, etc.), where each entry embeds the hash of the previous one so any edit or deletion breaks the chain visibly.
+- **`checkpoint.py`** — builds the signed checkpoint of the custody log (its size, an RFC 6962 root over the entries' `entry_hash` values, the chain head, the evidence root and a time) and the consistency proof from an earlier size, for the witnesses.
 - **`ecdsa_signer.py`** — signs each custody log entry with an ECDSA private key (the signed message is hashed with SHA-256) and verifies signatures with the matching public key, so entries can't be forged or altered without invalidating the signature. Entries signed by earlier versions used `python-ecdsa`'s default, SHA-1; they still verify, `verifier.py` reports how many there are, and `--reject-legacy-signatures` refuses them.
 - **`db.py`** — the single store: one SQLite file (`vcoc.db`, stdlib `sqlite3`) with `custody_log`, `evidence`, and `folders` tables. Everything is plain columns so the hash chain stays independently verifiable and queryable; `custody_log` is append-only (SQL triggers reject `UPDATE`/`DELETE`). `python cli.py export --out-dir DIR` regenerates `custody_log.json`, `evidence_index.json`, and `folder_index.json` for `verifier.py` or a third-party auditor.
 - **`storage.py`** — AES-256-GCM helpers plus an `EncryptedStore` (encrypted SQLite blobs, row key bound as associated data). No longer used by the CLI or shell; kept for the storage-overhead experiment (`scripts/storage_overhead.py`).
@@ -265,7 +276,10 @@ Everything below explains what each menu option / underlying module actually doe
 - **`cli.py`** — the command-line entry point. `python cli.py shell` launches the interactive shell; the same file also exposes one-shot subcommands (`init-keys`, `add-evidence`, `log-event`, `check-evidence`, `verify-chain`, `merkle-root`, `merkle-proof`, `export`, `checkpoint`, `migrate-merkle`) that the shell calls under the hood, for scripting/automation use.
 - **`witness.py`** — a standalone witness for custody-log checkpoints, run by an independent party (`init-key`, `cosign`, `show-state`). It cosigns a checkpoint only if it extends the last one it signed for that log, and imports `verifier.py` for its crypto rather than `vcoc`.
 - **`verifier.py`** — a standalone verifier, intentionally decoupled from `cli.py`. It re-implements hash and signature recomputation from first principles (no shared code path with `vcoc.hash_chain`), so it can independently confirm whether evidence or its custody history has been altered, without trusting the logging system's own self-reported state.
-- **`scripts/tamper_simulation.py`** — an experiment harness that builds a clean chain, applies single-point corruptions (payload, signature, hash-link), and confirms the standalone verifier catches every one.
+- **`scripts/`** — the experiment harnesses behind the paper's tables:
+  - `tamper_simulation.py` builds a clean chain, applies single-point corruptions (payload, signature, hash-link), and confirms the standalone verifier catches every one; `tamper_extended.py` adds truncation, deletion, reordering and a stolen-key rewrite, with and without an anchor.
+  - `witness_scenarios.py` runs the 12 attacks against `witness.py` and `verifier.py` and measures checkpoint, proof and cosignature costs.
+  - `performance_scale.py` and `storage_overhead.py` measure hashing, Merkle and storage costs; `paper_figures.py` redraws the result plots and `build_ieee_docx.py` builds the IEEE `.docx` from `Doc/Research_Paper_v3.md`.
 
 ### Running tests
 
@@ -275,32 +289,37 @@ pytest
 
 1,686 tests cover hashing (serial and process-pool), Merkle proof correctness (including nested/folder-batch proofs and RFC 6962 consistency proofs), hash-chain tamper detection, ECDSA sign/verify, the SQLite single store and its append-only guard, the tamper-simulation harness, multi-evidence custody events, the verifier anchor, checkpoints and the witness's refusals and quorum rules, the provenance HTML export, and the interactive shell (menu, forms, config, search, multi-select, key-pair setup, themes and the terminal matrix, loading screens, the status header, the Evidence categories and the screen stage).
 
+On every push and pull request to `main`, [CI](.github/workflows/ci.yml) runs `ruff check --select F` (pyflakes), the test
+suite and `pip-audit`. The audit ignores one `ecdsa` advisory (PYSEC-2026-1325, the Minerva timing attack) that has no
+upstream fix; it goes away when signing moves to the `cryptography` package.
+
 Full architecture, sequence diagrams, and a worked example session for the interactive shell are in
 [`Doc/CLI_Interactive_Shell_Architecture.md`](Doc/CLI_Interactive_Shell_Architecture.md).
 
-## Current Phase Status
-
-**Phase:** PRC-II (Project Review – 2) — **Core implementation complete**
+## Current Status (v4.0.0)
 
 Completed so far:
 - PRC-I: problem statement, objectives, 10-source literature survey, research gap identification, project abstract
-- Core modules implemented and unit-tested: `hashing.py` (SHA-256), `merkle.py` (tree + inclusion proofs), `hash_chain.py` (append-only, hash-linked, ECDSA-signed custody log), `ecdsa_signer.py`
-- `cli.py` (init-keys, add-evidence, log-event, verify-chain, merkle-root, merkle-proof, shell) and a standalone `verifier.py` that independently re-derives every hash/signature check
-- Scope extensions: SQLite storage with AES-256-GCM encryption at rest (`storage.py`), a tamper-simulation experiment harness (`scripts/tamper_simulation.py`), and an interactive shell (`vcoc.interactive`) over the same one-shot commands, with a persisted key-pair setup gate and filesystem path autofill
-- 80 unit/integration tests, including tamper-detection scenarios for payload, signature, and hash-link corruption, headless shell smoke tests, pure-function store-bridge coverage, and the shell's config/autofill/key-gate coverage
+- Core system: SHA-256 hashing with a process pool, an RFC 6962 Merkle tree with inclusion, nested (folder) and consistency proofs, an append-only hash-linked custody log signed with ECDSA (secp256k1, SHA-256), one append-only SQLite store, and multi-evidence custody events
+- Tamper evidence beyond the chain: an exported anchor, and witness-cosigned checkpoints (`checkpoint`, `witness.py`, quorum checks in `verifier.py`) that catch a truncation or a stolen-key rewrite of anything the witnesses have cosigned
+- A standalone `verifier.py` that shares no code with the logger, and an interactive shell over the same commands
+- Experiments: 4 basic and 7 extended tamper scenarios, 12 witness attack scenarios (8 stopped, 4 reported as limits), and scaling, storage and re-hash measurements
+- Research paper v3 ([`Doc/Research_Paper_v3.md`](Doc/Research_Paper_v3.md), IEEE format in `Doc/Research_Paper_v3_IEEE.docx`, current draft as [`Doc/Research_Paper_Draft.pdf`](Doc/Research_Paper_Draft.pdf)) and a prior-art scan ([`Doc/Novelty_Scan.md`](Doc/Novelty_Scan.md))
+- 1,686 passing tests and CI (lint, tests, dependency audit)
 
 ### Repository Layout
 
 ```
-src/vcoc/             Core library (hashing, merkle, hash_chain, ecdsa_signer, db, storage, models, visualize)
-src/vcoc/interactive/ Interactive shell (menu, forms, live search, verification screens)
-cli.py                CLI entry point (incl. `shell` subcommand)
+src/vcoc/             Core library (hashing, merkle, checkpoint, hash_chain, ecdsa_signer, db, storage, models, visualize)
+src/vcoc/interactive/ Interactive shell (menu, forms, live search, verification and checkpoint screens)
+cli.py                CLI entry point (incl. `shell`, `export`, `checkpoint`, `migrate-merkle`)
+witness.py            Standalone witness that cosigns checkpoints
 verifier.py           Standalone, independently-implemented verifier
-scripts/              Experiment harnesses (tamper_simulation.py)
+scripts/              Experiment harnesses and paper build scripts
 tests/                pytest suite
+Doc/                  Research paper, novelty scan, design and review documents
+.github/workflows/    CI
 ```
-
-**Next milestone:** Experimental results (performance/scale, tamper-detection results table) and paper draft for PRC-II submission.
 
 ## Standards Referenced
 - **Python-ecdsa documentation**
@@ -309,4 +328,4 @@ tests/                pytest suite
 
 ## Further Reading
 
-Full annotated literature summaries and the verified reference list are in the companion document **`Research_Summary_and_References.pdf`**.
+Full annotated literature summaries and the verified reference list are in the companion document [`Doc/Research_Summary_and_References.pdf`](Doc/Research_Summary_and_References.pdf). The current paper draft is [`Doc/Research_Paper_Draft.pdf`](Doc/Research_Paper_Draft.pdf).
