@@ -94,7 +94,7 @@ def reference(text: str) -> str:
 
 
 def caption(text: str) -> str:
-    return para('<w:spacing w:before="80" w:after="160"/><w:jc w:val="center"/>', run(text, i=True, sz=18))
+    return para('<w:keepLines/><w:spacing w:before="80" w:after="160"/><w:jc w:val="center"/>', run(text, i=True, sz=18))
 
 
 def split_row(line: str) -> list[str]:
