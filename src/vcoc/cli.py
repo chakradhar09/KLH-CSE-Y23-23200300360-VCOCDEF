@@ -32,7 +32,11 @@ DEFAULT_PUBLIC_KEY = "public_key.pem"
 
 def cmd_init_keys(args: argparse.Namespace) -> None:
     signing_key, _ = generate_keypair()
-    save_keypair(signing_key, args.private_key, args.public_key)
+    try:
+        save_keypair(signing_key, args.private_key, args.public_key)
+    except FileExistsError as exc:
+        print(exc)
+        sys.exit(1)
     print(f"Wrote private key -> {args.private_key}")
     print(f"Wrote public key  -> {args.public_key}")
 

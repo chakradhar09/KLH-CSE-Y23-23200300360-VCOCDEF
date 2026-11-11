@@ -65,7 +65,7 @@ From a clone, run `.\install.ps1` or `./install.sh` instead: it installs that ch
 For development (tests, experiment scripts, editable install into a venv):
 
 ```bash
-pip install -r requirements.txt -e .
+pip install -r requirements.txt   # = pip install -e .[dev]
 ```
 
 `vcoc` works on the files in the folder you run it from (`vcoc.db`, `private_key.pem`, `shell_config.json`), like git,
@@ -82,7 +82,7 @@ so run it inside the case folder. The old `python cli.py ...`, `python verifier.
 | `vcoc verify --log ...` | independent verifier |
 | `vcoc witness init-key / cosign / show-state` | checkpoint witness |
 
-Key dependencies: `ecdsa` (digital signatures), `prompt_toolkit` (interactive shell), `cryptography` (only for the AES-GCM storage-overhead experiment; the store itself is not encrypted), `matplotlib` (paper figures). `hashlib`, `json`, `sqlite3`, and `argparse` are part of the Python standard library and need no separate install.
+The `vcoc` command needs only `ecdsa` (digital signatures) and `prompt_toolkit` (interactive shell). The `research` extra adds `cryptography` (only for the AES-GCM storage-overhead experiment; the store itself is not encrypted) and `matplotlib` (paper figures); `dev` adds those and `pytest`. Private keys are written readable by their owner only (mode 0600 on Linux/macOS), and `vcoc init-keys` refuses to overwrite an existing key pair. `hashlib`, `json`, `sqlite3`, and `argparse` are part of the Python standard library and need no separate install.
 
 ### 3. Run the interactive shell
 
@@ -325,8 +325,10 @@ pytest
 
 1,686 tests cover hashing (serial and process-pool), Merkle proof correctness (including nested/folder-batch proofs and RFC 6962 consistency proofs), hash-chain tamper detection, ECDSA sign/verify, the SQLite single store and its append-only guard, the tamper-simulation harness, multi-evidence custody events, the verifier anchor, checkpoints and the witness's refusals and quorum rules, the provenance HTML export, and the interactive shell (menu, forms, config, search, multi-select, key-pair setup, themes and the terminal matrix, loading screens, the status header, the Evidence categories and the screen stage).
 
-On every push and pull request to `main`, [CI](.github/workflows/ci.yml) runs `ruff check --select F` (pyflakes), the test
-suite and `pip-audit`. The audit ignores one `ecdsa` advisory (PYSEC-2026-1325, the Minerva timing attack) that has no
+On every push and pull request to `main`, [CI](.github/workflows/ci.yml) runs on Linux and Windows: `ruff check --select F`
+(pyflakes), the test suite and `pip-audit`, then installs vcoc with `install.sh` / `install.ps1`, runs it in an empty folder
+and uninstalls it. Pushing a tag such as `v4.1.0` runs [Release](.github/workflows/release.yml), which checks the tag matches
+`vcoc.__version__`, builds the sdist and wheel and attaches them to that GitHub release. The audit ignores one `ecdsa` advisory (PYSEC-2026-1325, the Minerva timing attack) that has no
 upstream fix; it goes away when signing moves to the `cryptography` package.
 
 Full architecture, sequence diagrams, and a worked example session for the interactive shell are in
@@ -341,7 +343,7 @@ Completed so far:
 - A standalone `verifier.py` that shares no code with the logger, and an interactive shell over the same commands
 - Experiments: 4 basic and 7 extended tamper scenarios, 12 witness attack scenarios (8 stopped, 4 reported as limits), and scaling, storage and re-hash measurements
 - Research paper v3 ([`Doc/Research_Paper_v3.md`](Doc/Research_Paper_v3.md), IEEE format in `Doc/Research_Paper_v3_IEEE.docx`, current draft as [`Doc/Research_Paper_Draft.pdf`](Doc/Research_Paper_Draft.pdf)) and a prior-art scan ([`Doc/Novelty_Scan.md`](Doc/Novelty_Scan.md))
-- 1,693 passing tests and CI (lint, tests, dependency audit)
+- 1,707 passing tests and CI (lint, tests, dependency audit)
 
 ### Repository Layout
 
@@ -356,7 +358,7 @@ cli.py, verifier.py, witness.py   Shims so `python cli.py ...` keeps working
 scripts/              Experiment harnesses and paper build scripts
 tests/                pytest suite
 Doc/                  Research paper, novelty scan, design and review documents
-.github/workflows/    CI
+.github/workflows/    CI (lint, tests, audit, installer on Linux and Windows) and Release (build on v* tags)
 ```
 
 ## Standards Referenced

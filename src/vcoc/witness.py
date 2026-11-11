@@ -137,7 +137,10 @@ def cmd_init_key(args: argparse.Namespace) -> None:
         if Path(path).exists():
             raise Refused(f"{path} already exists; not overwriting a witness key")
     signing_key = SigningKey.generate(curve=SECP256k1)
-    Path(args.key).write_bytes(signing_key.to_pem())
+    # Owner-only (0600 on Linux/macOS): another local user who can read this key can cosign in this witness's name.
+    fd = os.open(args.key, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(signing_key.to_pem())
     Path(args.pub).write_bytes(signing_key.verifying_key.to_pem())
     print(f"Witness key pair written: {args.key} (keep secret), {args.pub} (give to whoever verifies)")
     print(f"Witness id: {verifier.checkpoint_log_id(signing_key.verifying_key)}")

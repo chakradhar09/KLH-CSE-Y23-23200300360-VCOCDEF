@@ -6,22 +6,32 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to a commit (the comment names its release): a moved tag cannot change what runs here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.11'
           cache: pip
 
+      # requirements.txt is `-e .[dev]`: the package itself plus the research and test extras.
       - name: Install dependencies
         run: pip install -r requirements.txt ruff pip-audit
 
       # Pyflakes only: undefined names, unused imports. Style rules stay advisory.
       - name: Lint
+        if: runner.os == 'Linux'
         run: ruff check --select F .
 
       - name: Test
@@ -30,4 +40,44 @@ jobs:
       # PYSEC-2026-1325: ecdsa Minerva timing attack, no upstream fix.
       # Drop this ignore once signing moves to the cryptography package.
       - name: Security audit
+        if: runner.os == 'Linux'
         run: pip-audit -r requirements.txt --ignore-vuln PYSEC-2026-1325
+
+  # Installs vcoc the way users do, with the installer from this checkout (uv, its own Python), and runs it.
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run install.sh
+        if: runner.os != 'Windows'
+        run: ./install.sh && echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Run install.ps1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          .\install.ps1
+          "$env:USERPROFILE\.local\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Use the installed command
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP"
+          vcoc --version
+          vcoc help > /dev/null
+          vcoc init-keys
+          echo evidence > e.txt
+          vcoc add-evidence --file e.txt --evidence-id EV1
+          vcoc verify-chain
+
+      - name: Uninstall
+        shell: bash
+        run: |
+          vcoc uninstall --yes
+          sleep 6
+          ! command -v vcoc

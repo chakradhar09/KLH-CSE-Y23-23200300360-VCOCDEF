@@ -7,7 +7,12 @@ name = "vcoc"
 dynamic = ["version"]
 description = "Verifiable chain of custody for digital evidence files"
 requires-python = ">=3.10"
-dependencies = ["ecdsa>=0.19", "cryptography>=42.0", "prompt_toolkit>=3.0"]
+dependencies = ["ecdsa>=0.19", "prompt_toolkit>=3.0"]
+
+[project.optional-dependencies]
+# The AES-GCM storage-overhead experiment (vcoc.storage) and the paper figures; the vcoc command needs neither.
+research = ["cryptography>=42.0", "matplotlib>=3.8"]
+dev = ["vcoc[research]", "pytest>=8.0"]
 
 [project.scripts]
 vcoc = "vcoc.__main__:main"

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from .ecdsa_signer import write_secret
 from .models import CustodyEvent, Evidence
 
 NONCE_SIZE = 12
@@ -19,7 +20,7 @@ def generate_key() -> bytes:
 
 
 def save_key(key: bytes, path: str | Path) -> None:
-    Path(path).write_bytes(key)
+    write_secret(path, key)
 
 
 def load_key(path: str | Path) -> bytes:

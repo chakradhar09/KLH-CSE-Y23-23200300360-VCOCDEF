@@ -74,15 +74,42 @@ def test_man_holds_every_section_and_witness_sub_commands(capsys):
         assert head in out
 
 
-def test_uninstall_uses_uv_or_pipx_for_their_tool_envs_and_pip_otherwise(monkeypatch, tmp_path):
+def test_uninstall_picks_uv_pipx_or_pip_from_how_vcoc_was_installed(monkeypatch, tmp_path):
     import vcoc.__main__ as m
     monkeypatch.setattr(m.shutil, "which", lambda name: name.upper())
-    monkeypatch.setattr(m.sys, "prefix", str(tmp_path / "uv" / "tools" / "vcoc"))
+    uv_env = tmp_path / "custom-tool-dir" / "vcoc"  # UV_TOOL_DIR can be anywhere: the receipt is what counts
+    uv_env.mkdir(parents=True)
+    (uv_env / "uv-receipt.toml").write_text("[tool]\n")
+    monkeypatch.setattr(m.sys, "prefix", str(uv_env))
     assert m._uninstall_command() == ["UV", "tool", "uninstall", "vcoc"]
+    monkeypatch.setattr(m.shutil, "which", lambda name: None)
+    assert m._uninstall_command() is None  # a uv env has no pip: never fall back to pip there
+    monkeypatch.setattr(m.shutil, "which", lambda name: name.upper())
     monkeypatch.setattr(m.sys, "prefix", str(tmp_path / "pipx" / "venvs" / "vcoc"))
     assert m._uninstall_command() == ["PIPX", "uninstall", "vcoc"]
     monkeypatch.setattr(m.sys, "prefix", str(tmp_path / "venv"))
     assert m._uninstall_command()[1:] == ["-m", "pip", "uninstall", "-y", "vcoc"]
+
+
+def test_cmd_exe_line_quotes_metacharacters_and_refuses_what_quotes_cannot_hold():
+    from vcoc.__main__ import _cmd_exe_line
+    assert _cmd_exe_line([r"C:\Users\Tom&Jerry\uv.exe", "tool"]) == r'"C:\Users\Tom&Jerry\uv.exe" "tool"'
+    assert _cmd_exe_line([r"C:\100%\uv.exe"]) is None
+    assert _cmd_exe_line(['a"b']) is None
+
+
+def test_uninstall_without_a_terminal_removes_nothing(monkeypatch, capsys):
+    import vcoc.__main__ as m
+    ran = []
+
+    def eof(prompt):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", eof)
+    monkeypatch.setattr(m.subprocess, "Popen", lambda *a, **k: ran.append(a))
+    monkeypatch.setattr(m.os, "execvp", lambda *a: ran.append(a))
+    main(["uninstall"])
+    assert not ran and "Nothing removed" in capsys.readouterr().out
 
 
 def test_uninstall_asks_first_and_does_nothing_on_no(monkeypatch, capsys):

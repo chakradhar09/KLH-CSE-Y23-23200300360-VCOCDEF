@@ -38,12 +38,5 @@ Doc/experiment_results
 /Doc/conference-template-a4.pdf
 /Doc/Research_Paper_IEEE_Format.docx
 
-# Playwright
-node_modules/
-/test-results/
-/playwright-report/
-/blob-report/
-/playwright/.cache/
-/playwright/.auth/
 *.egg-info/
 /build/

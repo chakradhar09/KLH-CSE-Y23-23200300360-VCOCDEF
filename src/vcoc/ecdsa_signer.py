@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 from ecdsa import BadSignatureError, SigningKey, VerifyingKey
@@ -47,8 +48,21 @@ def verify_signature(verifying_key: VerifyingKey, message: bytes, signature_hex:
     return signature_scheme(verifying_key, message, signature_hex, allow_legacy) is not None
 
 
+def write_secret(path: str | Path, data: bytes) -> None:
+    """Create `path` holding `data`, readable by its owner only (mode 0600 on Linux/macOS; on Windows the folder's
+    access rules apply). Refuses to replace an existing file (FileExistsError), so a key is never silently lost."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+
+
 def save_keypair(signing_key: SigningKey, private_path: str | Path, public_path: str | Path) -> None:
-    Path(private_path).write_bytes(signing_key.to_pem())
+    """Write a new key pair. Refuses (FileExistsError, nothing written) if either file exists: overwriting the pair
+    would leave every entry signed so far unverifiable."""
+    for path in (private_path, public_path):
+        if Path(path).exists():
+            raise FileExistsError(f"{path} already exists; not overwriting a key (move it away first)")
+    write_secret(private_path, signing_key.to_pem())
     Path(public_path).write_bytes(signing_key.verifying_key.to_pem())
 
 

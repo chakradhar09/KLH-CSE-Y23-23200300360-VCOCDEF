@@ -16,8 +16,14 @@ if ! command -v uv >/dev/null 2>&1; then
     command -v uv >/dev/null 2>&1 || { echo "ERROR: uv did not install. Check your internet connection and run this again." >&2; exit 1; }
 fi
 
-DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)
-if [ -n "$DIR" ] && [ -f "$DIR/pyproject.toml" ]; then SOURCE="$DIR"; else SOURCE="$ARCHIVE"; fi
+# Install the checkout this script sits in only if it really is vcoc. Under `curl ... | sh`, $0 is "sh" and dirname
+# gives the current folder, which may be some other Python project: then the published archive is used.
+SOURCE="$ARCHIVE"
+case "$0" in
+    */install.sh|install.sh)
+        DIR=$(cd "$(dirname "$0")" && pwd)
+        if grep -qx 'name = "vcoc"' "$DIR/pyproject.toml" 2>/dev/null; then SOURCE="$DIR"; fi ;;
+esac
 echo "Installing vcoc from $SOURCE with Python $PYTHON ..."
 uv tool install --force --python "$PYTHON" "$SOURCE"
 uv tool update-shell >/dev/null 2>&1 || true
