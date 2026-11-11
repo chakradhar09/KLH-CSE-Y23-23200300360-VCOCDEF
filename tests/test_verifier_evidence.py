@@ -126,16 +126,18 @@ def test_verify_evidence_index_multi_chunk_file_mismatch_still_detected(tmp_path
     assert bad[0].rehash_status == "MISMATCH"
 
 
-def test_verifier_module_stays_standalone_and_imports_nothing_from_vcoc():
+def test_verifier_module_stays_standalone_and_imports_nothing_from_vcoc(tmp_path):
+    import shutil
     import subprocess
 
-    repo = Path(__file__).resolve().parent.parent
+    # An auditor copies the one file out of the package and runs it with nothing else around it.
+    shutil.copy(Path(__file__).resolve().parent.parent / "src" / "vcoc" / "verifier.py", tmp_path / "verifier.py")
     code = (
         "import sys; sys.path.insert(0, sys.argv[1]); import verifier; "
         "bad = [m for m in sys.modules if m == 'vcoc' or m.startswith('vcoc.')]; "
         "sys.exit(1 if bad else 0)"
     )
-    assert subprocess.run([sys.executable, "-c", code, str(repo)]).returncode == 0
+    assert subprocess.run([sys.executable, "-c", code, str(tmp_path)], cwd=tmp_path).returncode == 0
 
 
 def test_verify_evidence_index_not_logged_flagged():

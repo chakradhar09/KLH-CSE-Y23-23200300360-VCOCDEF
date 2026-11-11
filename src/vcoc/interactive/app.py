@@ -10,7 +10,7 @@ from prompt_toolkit.layout import Layout, Window
 from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.widgets import Frame
 
-import cli as cli_module
+from vcoc import cli as cli_module
 
 from . import config, menu, stage, status, theme
 

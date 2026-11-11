@@ -17,8 +17,8 @@ from prompt_toolkit.layout.controls import FormattedTextControl
 from prompt_toolkit.layout.dimension import D
 from prompt_toolkit.widgets import Frame
 
-import cli as cli_module
-import verifier as verifier_module
+from vcoc import cli as cli_module
+from vcoc import verifier as verifier_module
 from vcoc import db
 
 from . import config as config_module
@@ -91,7 +91,7 @@ def _shortened_warning(shell_config: dict | None, entries: list) -> tuple[list[s
         "",
         "Restore the database from a backup,",
         "or compare it with an anchor.json",
-        "made earlier with cli.py export.",
+        "made earlier with vcoc export.",
         "",
         "To reset this warning, delete",
         '"last_verify" from shell_config.json,',

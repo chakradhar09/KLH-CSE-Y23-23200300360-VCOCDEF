@@ -73,7 +73,7 @@ def test_write_checkpoint_signs_the_whole_log_and_remembers_where_it_went(shell)
     checkpoint = json.loads((tmp_path / "checkpoint.json").read_text(encoding="utf-8"))
     assert checkpoint["body"]["size"] == 3
     assert verifier.checkpoint_problem(checkpoint, _db_entries(), load_verifying_key(cli_module.DEFAULT_PUBLIC_KEY)) is None
-    assert "Checkpoint written" in shown["text"] and "witness.py cosign" in shown["text"]  # says what to send, and to whom
+    assert "Checkpoint written" in shown["text"] and "vcoc witness cosign" in shown["text"]  # says what to send, and to whom
     assert config["checkpoint"] == str(tmp_path / "checkpoint.json")
 
 

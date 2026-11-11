@@ -10,8 +10,8 @@ import re
 import time
 from pathlib import Path
 
-import cli as cli_module
-import verifier as verifier_module
+from vcoc import cli as cli_module
+from vcoc import verifier as verifier_module
 
 from . import config as config_module
 from . import forms, theme
@@ -330,7 +330,7 @@ def action_merkle_proof(shell_config: dict) -> None:
 
 def action_write_checkpoint(shell_config: dict) -> None:
     """The custodian's half of witnessing: a signed checkpoint of the log (and the consistency proof from the size the
-    witnesses last cosigned) to send to them. They cosign with witness.py on their own machine, never in this shell."""
+    witnesses last cosigned) to send to them. They cosign with `vcoc witness` on their own machine, never in this shell."""
     title = "Write checkpoint for witnesses"
     if not ensure_keys(shell_config):
         return
@@ -354,7 +354,7 @@ def action_write_checkpoint(shell_config: dict) -> None:
         config_module.save_config(config_module.DEFAULT_CONFIG_PATH, shell_config)
         proof = f" --proof {ns.proof_out}" if ns.proof_out else ""
         output += (f"\n\nSend {out}{' and ' + ns.proof_out if ns.proof_out else ''} to each witness. On their own machine they run:\n"
-                   f"  python witness.py cosign --checkpoint {out}{proof} --state <their state.json> --key <their key>"
+                   f"  vcoc witness cosign --checkpoint {out}{proof} --state <their state.json> --key <their key>"
                    f" --log-key {shell_config['public_key']} --out <cosigned.json>\n"
                    "Then check the log against the file they send back with 'Verify against cosigned checkpoint'.")
     forms.show_output(title, output)

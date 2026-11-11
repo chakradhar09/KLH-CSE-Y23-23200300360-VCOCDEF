@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .models import CustodyEvent, Evidence
 
-SCHEMA_VERSION = 2  # 2: stored folder roots follow the RFC 6962 Merkle rules; `cli.py migrate-merkle` converts a version 1 database
+SCHEMA_VERSION = 2  # 2: stored folder roots follow the RFC 6962 Merkle rules; `vcoc migrate-merkle` converts a version 1 database
 
 
 class LegacyMerkleFormat(RuntimeError):
@@ -75,7 +75,7 @@ def _require_current_merkle(conn: sqlite3.Connection) -> None:
     if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
         raise LegacyMerkleFormat(
             "This database stores folder Merkle roots made under the old tree rules (schema version 1). "
-            "Run `python cli.py migrate-merkle` once to convert it; the custody log and the evidence are not touched."
+            "Run `vcoc migrate-merkle` once to convert it; the custody log and the evidence are not touched."
         )
 
 
