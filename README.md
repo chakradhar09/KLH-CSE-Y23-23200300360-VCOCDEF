@@ -2,6 +2,16 @@
 
 [![CI](https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF/actions/workflows/ci.yml/badge.svg)](https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF)](https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+## Project Description
+
+`vcoc` is a tamper-evident chain-of-custody system for digital evidence files such as disk images, memory dumps and
+log exports. Every file is hashed with SHA-256 on intake and added as a leaf of an RFC 6962 Merkle tree. Every custody
+event (intake, transfer, access, annotation) is an ECDSA-signed entry hash-linked to the one before it, and independent
+witnesses cosign checkpoints of the tree. A separate verifier recomputes the hashes, the chain and the inclusion and
+consistency proofs, so anyone can confirm that neither the evidence nor its custody history changed after collection.
+It runs as a local `vcoc` terminal command with no blockchain or consensus network.
 
 **Current release: v4.0.0.** Witness-cosigned checkpoints, an RFC 6962 Merkle tree with consistency proofs, SHA-256
 signatures and process-pool hashing. Databases made by v3.x need `vcoc migrate-merkle` once (see
@@ -369,3 +379,8 @@ Doc/                  Research paper, novelty scan, design and review documents
 ## Further Reading
 
 Full annotated literature summaries and the verified reference list are in the companion document [`Doc/Research_Summary_and_References.pdf`](Doc/Research_Summary_and_References.pdf). The current paper draft is [`Doc/Research_Paper_Draft.pdf`](Doc/Research_Paper_Draft.pdf).
+
+## License
+
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Chilakapati Srijaya Chakradhar, Gogineni Nikhil Sai and
+Pusunuru Preetham.

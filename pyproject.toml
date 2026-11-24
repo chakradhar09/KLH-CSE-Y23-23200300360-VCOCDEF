@@ -1,13 +1,27 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]  # 77+ for the SPDX `license` string and `license-files`
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "vcoc"
 dynamic = ["version"]
-description = "Verifiable chain of custody for digital evidence files"
+description = "Tamper-evident chain of custody for digital evidence: SHA-256 hashing, an RFC 6962 Merkle tree, ECDSA-signed hash-linked custody logs and witness-cosigned checkpoints, with an independent verifier"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
+keywords = ["digital-forensics", "chain-of-custody", "merkle-tree", "ecdsa", "transparency-log", "evidence-integrity"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Security :: Cryptography",
+    "Environment :: Console",
+]
 dependencies = ["ecdsa>=0.19", "prompt_toolkit>=3.0"]
+
+[project.urls]
+Homepage = "https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF"
+Issues = "https://github.com/chakradhar09/KLH-CSE-Y23-23200300360-VCOCDEF/issues"
 
 [project.optional-dependencies]
 # The AES-GCM storage-overhead experiment (vcoc.storage) and the paper figures; the vcoc command needs neither.
